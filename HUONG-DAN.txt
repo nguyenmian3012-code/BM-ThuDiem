@@ -1,0 +1,10 @@
+Cập nhật riêng BM-ThuDiem, không đè thư mục AutoCan.
+
+1. Đóng cửa sổ BM-ThuDiem cũ nếu đang mở.
+2. Tải BM-ThuDiem-1.0.0.zip từ phần Releases của repo BM-ThuDiem.
+3. Giải nén vào một thư mục riêng, ví dụ C:\BM-ThuDiem. Không giải vào thư mục BmCancomp.
+4. Chạy BM-ThuDiem.exe. Cửa sổ phải ghi phiên bản 1.0.0 và đang nghe COM4.
+5. AutoCan vẫn mở như cũ để đưa phiếu lên canxe.redtigerhead.com. Không cần cài lại AutoCan cho những lần sửa điểm bột sau này.
+6. Lần cập nhật sau: đóng BM-ThuDiem.exe, giải nén bản mới đè đúng thư mục C:\BM-ThuDiem, mở lại. Không đụng file cân xe.
+
+Phiếu nằm ở cơ sở riêng thudiem.db, cùng thư mục dữ liệu với AutoCan, nhưng không mở file cancomp.db. Khi có điểm hợp lệ, chương trình thả một tệp cho AutoCan gửi tiếp.

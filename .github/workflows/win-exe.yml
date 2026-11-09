@@ -1,0 +1,28 @@
+name: win-exe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet publish BMThuDiem.csproj -c Release -r win-x64 --self-contained true -o publish
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path publish\* -DestinationPath BM-ThuDiem-1.0.0.zip
+      - name: Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete v1.0.0 --yes --cleanup-tag || true
+          gh release create v1.0.0 BM-ThuDiem-1.0.0.zip \
+            --title "BM-ThuDiem 1.0.0" \
+            --notes "Chuong trinh cham diem bot rieng. Chi nghe COM4. Tra phu luc 1 QĐ 228/1999 theo can uot."

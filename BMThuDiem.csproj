@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BM-ThuDiem</AssemblyName>
+    <RootNamespace>BMThuDiem</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>BM-ThuDiem</Product>
+    <Company>Minh An ABMT</Company>
+    <Description>Chấm điểm bột sắn theo QĐ 228/1999, chỉ nghe COM4.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="quy-tac.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

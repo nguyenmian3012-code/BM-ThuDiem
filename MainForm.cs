@@ -1,0 +1,431 @@
+namespace BMThuDiem;
+
+public sealed class MainForm : Form
+{
+    readonly TrialStore _store = new();
+    readonly System.Windows.Forms.Timer _tick = new() { Interval = 200 };
+    readonly Label _live = Value("0 g");
+    readonly Label _dry = Value("—");
+    readonly Label _wet = Value("—");
+    readonly Label _eq = Value("—");
+    readonly Label _point = Value("—");
+    readonly Label _state = new() { AutoSize = true, ForeColor = Color.FromArgb(232, 197, 71), Text = "chờ COM4" };
+    readonly Label _com = Lamp();
+    readonly Label _auto = Lamp();
+    readonly TextBox _raw = new()
+    {
+        Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
+        BackColor = Color.FromArgb(16, 8, 10), ForeColor = Color.FromArgb(186, 214, 158),
+        Font = new Font("Consolas", 9f), ScrollBars = ScrollBars.Vertical,
+    };
+    readonly DataGridView _grid = new() { Dock = DockStyle.Fill, AutoGenerateColumns = false };
+    readonly List<ThuRow> _rows = new();
+    readonly object _gate = new();
+    ListenCom4? _port;
+    string _pending = "";
+    int _grams;
+    bool _kingbird;
+    DateTime _sampleAt = DateTime.MinValue;
+    DateTime _rawAt = DateTime.MinValue;
+    bool _listening;
+    bool _unlocked;
+    bool _session;
+    bool _dryLocked;
+    int _prev;
+    double _dryG;
+    double _best = double.MaxValue;
+    double? _wetG;
+    readonly List<(DateTime t, int g)> _wetWin = new();
+    DateTime _lowSince = DateTime.MinValue;
+
+    public MainForm()
+    {
+        _store.Init();
+        Text = "BM-ThuDiem 1.0.0  ·  COM4  ·  QĐ 228/1999";
+        Width = 1180;
+        Height = 740;
+        StartPosition = FormStartPosition.CenterScreen;
+        BackColor = Color.FromArgb(42, 10, 18);
+        ForeColor = Color.FromArgb(246, 238, 230);
+        Font = new Font("Segoe UI", 10f);
+
+        var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 188, Padding = new Padding(12, 8, 12, 4), WrapContents = false };
+        top.Controls.Add(Card("Số g hiện tại", _live));
+        top.Controls.Add(Card("Chuỗi khô", _dry));
+        top.Controls.Add(Card("Cân ướt", _wet));
+        top.Controls.Add(Card("Ướt quy về 5 kg", _eq));
+        top.Controls.Add(Card("Số điểm", _point));
+        var lamps = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, Padding = new Padding(8, 4, 0, 0) };
+        lamps.Controls.Add(_com);
+        lamps.Controls.Add(_auto);
+        lamps.Controls.Add(_state);
+        top.Controls.Add(lamps);
+
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 48, Padding = new Padding(12, 6, 12, 6) };
+        var listen = Button("Nghe COM4");
+        var stop = Button("Ngừng");
+        var edit = Button("Mở sửa");
+        var shifts = Button("Ca cân");
+        var rules = Button("Quy tắc");
+        listen.Click += (_, _) => StartListen();
+        stop.Click += (_, _) => StopListen();
+        edit.Click += (_, _) => Unlock();
+        shifts.Click += (_, _) => EditShifts();
+        rules.Click += (_, _) => ShowRules();
+        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules });
+
+        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
+        _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
+        _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
+        _grid.DefaultCellStyle.ForeColor = Color.FromArgb(246, 238, 230);
+        _grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(74, 24, 32);
+        _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(232, 197, 71);
+        _grid.EnableHeadersVisualStyles = false;
+        _grid.RowHeadersVisible = false;
+        _grid.AllowUserToAddRows = false;
+        _grid.Columns.Add(Col("Stt", "Số thứ tự", true));
+        _grid.Columns.Add(Col("Diem", "Số điểm", true));
+        _grid.Columns.Add(Col("Operator", "Người cân", false));
+        _grid.Columns.Add(Col("Plate", "Số xe", false));
+        _grid.Columns.Add(Col("Impurity", "% tạp chất", false));
+        _grid.Columns.Add(Col("Price", "Giá củ", false));
+        _grid.CellBeginEdit += (_, e) => { if (!_unlocked) e.Cancel = true; };
+        _grid.CellEndEdit += (_, e) =>
+        {
+            if (e.RowIndex < 0 || _grid.Rows[e.RowIndex].DataBoundItem is not ThuRow row) return;
+            _store.Update(row);
+        };
+        split.Panel1.Controls.Add(_grid);
+        var rawHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
+        rawHost.Controls.Add(_raw);
+        split.Panel2.Controls.Add(rawHost);
+        split.Panel2.Controls.Add(new Label { Text = "RAW COM4  ·  1,5 giây", Dock = DockStyle.Top, Height = 24, ForeColor = Color.FromArgb(232, 197, 71) });
+        Controls.Add(split);
+        Controls.Add(bar);
+        Controls.Add(top);
+        Load += (_, _) =>
+        {
+            Reload();
+            StartListen();
+            try
+            {
+                var room = split.Width - 280;
+                if (room > 200) split.SplitterDistance = room;
+            }
+            catch { }
+        };
+        FormClosing += (_, _) => StopListen();
+        _tick.Tick += (_, _) => Pulse();
+        _tick.Start();
+    }
+
+    void StartListen()
+    {
+        StopListen();
+        try
+        {
+            _port = new ListenCom4();
+            _port.Frame += OnFrame;
+            _port.Open();
+            _listening = true;
+            SetLamp(_com, true, "COM4 đang nghe 1200 8N1");
+        }
+        catch (Exception ex)
+        {
+            SetLamp(_com, false, "COM4 " + ex.Message);
+            _state.Text = "không mở được COM4";
+        }
+    }
+
+    void StopListen()
+    {
+        _listening = false;
+        try { _port?.Dispose(); } catch { }
+        _port = null;
+        SetLamp(_com, false, "COM4 ngừng");
+    }
+
+    int _serial;
+    int _seen;
+
+    void OnFrame(string raw)
+    {
+        var king = Gram.IsKingbird(raw);
+        var ok = Gram.TryGrams(raw, out var grams);
+        lock (_gate)
+        {
+            _pending = raw;
+            _kingbird = king;
+            if (ok && !king)
+            {
+                _grams = grams;
+                _serial++;
+            }
+            _sampleAt = DateTime.UtcNow;
+        }
+    }
+
+    void Pulse()
+    {
+        if (IsDisposed) return;
+        string raw;
+        int grams;
+        bool king;
+        DateTime at;
+        int serial;
+        lock (_gate)
+        {
+            raw = _pending;
+            grams = _grams;
+            king = _kingbird;
+            at = _sampleAt;
+            serial = _serial;
+        }
+        var auto = AutoCanAlive();
+        SetLamp(_auto, auto, auto ? "AutoCan đang chạy" : "AutoCan tắt, phiếu chờ gửi");
+        try { File.WriteAllText(Path.Combine(_store.DataDir, "thudiem.host"), DateTimeOffset.Now.ToString("o")); } catch { }
+        if (raw.Length > 0 && DateTime.UtcNow - _rawAt >= TimeSpan.FromMilliseconds(1500))
+        {
+            _rawAt = DateTime.UtcNow;
+            _raw.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + raw + Environment.NewLine);
+            if (_raw.TextLength > 4000) _raw.Text = _raw.Text[^2000..];
+        }
+        MarkDone();
+        if (!_listening) return;
+        if (at == DateTime.MinValue || DateTime.UtcNow - at > TimeSpan.FromSeconds(3))
+        {
+            _state.Text = "COM4 im";
+            return;
+        }
+        if (king)
+        {
+            _state.Text = "COM4 ra khung cân xe. Không chấm.";
+            return;
+        }
+        if (serial != _seen)
+        {
+            _seen = serial;
+            OnGrams(grams);
+        }
+        else if (_session && grams < 100 && _lowSince != DateTime.MinValue)
+            OnGrams(grams);
+    }
+
+    void OnGrams(int grams)
+    {
+        _live.Text = grams.ToString("0") + " g";
+        if (grams < 100)
+        {
+            if (_lowSince == DateTime.MinValue) _lowSince = DateTime.UtcNow;
+            if (DateTime.UtcNow - _lowSince < TimeSpan.FromSeconds(1)) return;
+            if (_session && _dryLocked && _wetG is double wet)
+                Commit(_dryG, wet);
+            else if (_session && _dryLocked)
+            {
+                _state.Text = "không ra phiếu, chưa có cân ướt";
+                EndSession();
+            }
+            else EndSession();
+            return;
+        }
+        _lowSince = DateTime.MinValue;
+        var rising = grams > _prev;
+        _prev = grams;
+        if (!_session)
+        {
+            if (grams > 1000 && rising)
+            {
+                _session = true;
+                _state.Text = "mở phiên";
+            }
+            return;
+        }
+        if (grams >= 4500 && grams <= 5500)
+        {
+            var dist = Math.Abs(grams - 5000);
+            if (!_dryLocked || dist < _best || (Math.Abs(dist - _best) < 0.1 && grams < _dryG))
+            {
+                _dryG = grams;
+                _best = dist;
+                _dryLocked = true;
+                _dry.Text = grams.ToString("0") + " g";
+                _wet.Text = "—";
+                _eq.Text = "—";
+                _point.Text = "—";
+                _wetG = null;
+                _wetWin.Clear();
+                _state.Text = "khô " + grams.ToString("0") + " g";
+            }
+            return;
+        }
+        if (!_dryLocked || grams >= 1500 || grams < 150) 
+        {
+            _wetWin.Clear();
+            if (_dryLocked) _state.Text = "đã có khô, chờ cân ướt";
+            return;
+        }
+        if (_wetWin.Count > 0 && Math.Abs(grams - _wetWin[^1].g) > 20) _wetWin.Clear();
+        _wetWin.Add((DateTime.UtcNow, grams));
+        _wetWin.RemoveAll(x => DateTime.UtcNow - x.t > TimeSpan.FromSeconds(3));
+        var span = _wetWin[^1].t - _wetWin[0].t;
+        if (span < TimeSpan.FromSeconds(1) || _wetWin.Count < 3) return;
+        var min = _wetWin.Min(x => x.g);
+        var max = _wetWin.Max(x => x.g);
+        if (max - min > 12) return;
+        var wetNow = _wetWin.Average(x => x.g);
+        _wetG = wetNow;
+        _wet.Text = wetNow.ToString("0") + " g";
+        var equiv = StarchTable.EquivalentWet(_dryG, wetNow);
+        _eq.Text = equiv.ToString("0") + " g";
+        if (StarchTable.TryNearest(equiv, out var listed, out var diem))
+        {
+            _point.Text = diem.ToString("0.00") + " %";
+            _state.Text = "ướt ổn " + wetNow.ToString("0") + " g → " + diem.ToString("0.00") + "%";
+        }
+        else
+        {
+            _point.Text = "ngoài bảng";
+            _state.Text = "ướt " + equiv.ToString("0") + " g ngoài 280–670";
+        }
+    }
+
+    void Commit(double dry, double wet)
+    {
+        var equiv = StarchTable.EquivalentWet(dry, wet);
+        var ok = StarchTable.TryNearest(equiv, out var listed, out var diem);
+        var who = _store.OperatorNow();
+        var note = ok ? "" : "ngoài bảng";
+        var id = _store.Add(ok ? diem : null, who, dry, wet, equiv, listed, "", note);
+        if (ok)
+        {
+            _store.HandOff(id, diem, who, dry, wet, equiv, listed);
+            _point.Text = diem.ToString("0.00") + " %";
+            _state.Text = "đã chốt " + diem.ToString("0.00") + "%";
+        }
+        else
+        {
+            _point.Text = "ngoài bảng";
+            _state.Text = "không chốt, cân ướt ngoài phụ lục";
+        }
+        _eq.Text = equiv.ToString("0") + " g";
+        EndSession();
+        Reload();
+    }
+
+    void EndSession()
+    {
+        _session = false;
+        _dryLocked = false;
+        _wetG = null;
+        _best = double.MaxValue;
+        _prev = 0;
+        _wetWin.Clear();
+        _lowSince = DateTime.MinValue;
+    }
+
+    void Reload()
+    {
+        _rows.Clear();
+        _rows.AddRange(_store.Recent());
+        _grid.DataSource = null;
+        _grid.DataSource = _rows;
+    }
+
+    void MarkDone()
+    {
+        var dir = Path.Combine(_store.DataDir, "starch_done");
+        if (!Directory.Exists(dir)) return;
+        foreach (var file in Directory.EnumerateFiles(dir, "td*.json"))
+        {
+            var name = Path.GetFileNameWithoutExtension(file);
+            if (name.StartsWith("td") && long.TryParse(name[2..], out var id))
+                _store.Mark(id, "đã giao");
+            try { File.Delete(file); } catch { }
+        }
+    }
+
+    static bool AutoCanAlive()
+    {
+        var path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "BmCancomp", "data", "heartbeat.txt");
+        if (!File.Exists(path))
+            path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BmCancomp", "data", "heartbeat.txt");
+        return File.Exists(path) && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < TimeSpan.FromSeconds(8);
+    }
+
+    void Unlock()
+    {
+        using var box = new Form { Text = "Mã admin", Width = 320, Height = 150, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog };
+        var tb = new TextBox { Location = new Point(24, 24), Width = 250, UseSystemPasswordChar = true };
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(180, 64) };
+        box.Controls.Add(tb);
+        box.Controls.Add(ok);
+        box.AcceptButton = ok;
+        if (box.ShowDialog(this) != DialogResult.OK) return;
+        if (tb.Text.Trim() != _store.AdminPin())
+        {
+            MessageBox.Show(this, "Sai mã.");
+            return;
+        }
+        _unlocked = true;
+    }
+
+    void EditShifts()
+    {
+        if (!_unlocked) Unlock();
+        if (!_unlocked) return;
+        using var box = new Form { Text = "Ca cân — mỗi dòng HH:mm Tên", Width = 420, Height = 320, StartPosition = FormStartPosition.CenterParent };
+        var tb = new TextBox { Multiline = true, Dock = DockStyle.Fill, Text = string.Join(Environment.NewLine, _store.ShiftLines()), Font = new Font("Consolas", 11f) };
+        var ok = new Button { Text = "Lưu", Dock = DockStyle.Bottom, Height = 36, DialogResult = DialogResult.OK };
+        box.Controls.Add(tb);
+        box.Controls.Add(ok);
+        box.AcceptButton = ok;
+        if (box.ShowDialog(this) == DialogResult.OK) _store.SaveShifts(tb.Text);
+    }
+
+    void ShowRules()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "quy-tac.md");
+        var text = File.Exists(path) ? File.ReadAllText(path) : "Không thấy quy-tac.md cạnh chương trình.";
+        using var box = new Form { Text = "Quy tắc điểm bột", Width = 760, Height = 560, StartPosition = FormStartPosition.CenterParent };
+        var tb = new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical, Text = text, Font = new Font("Segoe UI", 10f) };
+        box.Controls.Add(tb);
+        box.ShowDialog(this);
+    }
+
+    static Label Value(string text) => new()
+    {
+        Text = text, AutoSize = true, Font = new Font("Segoe UI", 18f, FontStyle.Bold),
+        ForeColor = Color.FromArgb(246, 238, 230), Location = new Point(10, 36),
+    };
+
+    static Label Lamp() => new() { AutoSize = true, Margin = new Padding(0, 4, 0, 4), Text = "○ …" };
+
+    static void SetLamp(Label lamp, bool on, string text)
+    {
+        lamp.Text = (on ? "● " : "○ ") + text;
+        lamp.ForeColor = on ? Color.FromArgb(94, 184, 108) : Color.FromArgb(201, 180, 173);
+    }
+
+    static Panel Card(string title, Label value)
+    {
+        var p = new Panel { Width = 176, Height = 88, Margin = new Padding(0, 0, 8, 0), BackColor = Color.FromArgb(62, 18, 28) };
+        p.Controls.Add(new Label { Text = title, Location = new Point(10, 8), AutoSize = true, ForeColor = Color.FromArgb(232, 197, 71) });
+        p.Controls.Add(value);
+        return p;
+    }
+
+    static Button Button(string text) => new()
+    {
+        Text = text, AutoSize = true, Height = 32, FlatStyle = FlatStyle.Flat,
+        BackColor = Color.FromArgb(74, 24, 32), ForeColor = Color.FromArgb(246, 238, 230),
+        Margin = new Padding(0, 0, 8, 0),
+    };
+
+    static DataGridViewTextBoxColumn Col(string prop, string header, bool readOnly) => new()
+    {
+        DataPropertyName = prop, HeaderText = header, ReadOnly = readOnly,
+        AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+    };
+}
