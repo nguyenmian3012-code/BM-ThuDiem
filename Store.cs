@@ -8,11 +8,13 @@ public sealed class ThuRow
 {
     public long Id { get; set; }
     public string Stt { get; set; } = "";
+    public string When { get; set; } = "";
     public string Diem { get; set; } = "";
     public string Operator { get; set; } = "";
     public string Plate { get; set; } = "";
     public string Impurity { get; set; } = "";
     public string Price { get; set; } = "";
+    public DateTime Day { get; set; }
 }
 
 public sealed class TrialStore
@@ -72,6 +74,7 @@ public sealed class TrialStore
         n.CommandText = "SELECT COUNT(*) FROM shifts";
         if (Convert.ToInt32(n.ExecuteScalar()) == 0)
             SaveShifts("07:00 a Phước\n07:00 a Đấu");
+        Trim();
     }
 
     void Try(string sql)
@@ -105,7 +108,9 @@ public sealed class TrialStore
         cmd.ExecuteNonQuery();
         using var id = _cx.CreateCommand();
         id.CommandText = "SELECT last_insert_rowid()";
-        return Convert.ToInt64(id.ExecuteScalar());
+        var n = Convert.ToInt64(id.ExecuteScalar());
+        Trim();
+        return n;
     }
 
     public void HandOff(long id, double diem, string who, double dry, double wet, double equiv, int listed)
@@ -154,34 +159,74 @@ public sealed class TrialStore
         cmd.ExecuteNonQuery();
     }
 
+    public void Trim()
+    {
+        const long cap = 500L * 1024 * 1024;
+        long Size()
+        {
+            long n = File.Exists(DbPath) ? new FileInfo(DbPath).Length : 0;
+            var wal = DbPath + "-wal";
+            if (File.Exists(wal)) n += new FileInfo(wal).Length;
+            return n;
+        }
+        if (Size() < cap) return;
+        while (Size() > cap * 4 / 5)
+        {
+            using var del = _cx.CreateCommand();
+            del.CommandText = "DELETE FROM trials WHERE id IN (SELECT id FROM trials ORDER BY id LIMIT 500)";
+            if (del.ExecuteNonQuery() == 0) break;
+        }
+        using var ck = _cx.CreateCommand();
+        ck.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+        ck.ExecuteNonQuery();
+        using var vac = _cx.CreateCommand();
+        vac.CommandText = "VACUUM";
+        vac.ExecuteNonQuery();
+    }
+
     public List<ThuRow> Recent()
     {
         var rows = new List<ThuRow>();
         using var cmd = _cx.CreateCommand();
-        cmd.CommandText = "SELECT id, diem, IFNULL(operator,''), IFNULL(plate,''), IFNULL(impurity,''), IFNULL(price,''), IFNULL(note,'') FROM trials ORDER BY id DESC LIMIT 200";
+        cmd.CommandText = "SELECT id, ts, diem, IFNULL(operator,''), IFNULL(plate,''), IFNULL(impurity,''), IFNULL(price,''), IFNULL(note,'') FROM trials ORDER BY id DESC LIMIT 200";
         using var rd = cmd.ExecuteReader();
         while (rd.Read())
         {
-            var note = rd.GetString(6);
-            var diem = rd.IsDBNull(1) ? note : rd.GetDouble(1).ToString("0.00");
+            var note = rd.GetString(7);
+            var diem = rd.IsDBNull(2) ? note : rd.GetDouble(2).ToString("0.00");
+            var when = DateTime.Now;
+            if (DateTimeOffset.TryParse(rd.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto))
+                when = dto.LocalDateTime;
             rows.Add(new ThuRow
             {
                 Id = rd.GetInt64(0),
+                When = when.ToString("HH:mm:ss"),
+                Day = when.Date,
                 Diem = diem,
-                Operator = rd.GetString(2),
-                Plate = rd.GetString(3),
-                Impurity = rd.GetString(4),
-                Price = rd.GetString(5),
+                Operator = rd.GetString(3),
+                Plate = rd.GetString(4),
+                Impurity = rd.GetString(5),
+                Price = rd.GetString(6),
             });
         }
         rows.Reverse();
         for (var i = 0; i < rows.Count; i++) rows[i].Stt = i.ToString();
         rows.Reverse();
-        return rows;
+        var shown = new List<ThuRow>();
+        DateTime? prev = null;
+        foreach (var row in rows)
+        {
+            if (prev != null && row.Day != prev.Value)
+                shown.Add(new ThuRow { Id = 0, When = "—— hết " + row.Day.ToString("dd/MM") + " ——", Day = row.Day });
+            shown.Add(row);
+            prev = row.Day;
+        }
+        return shown;
     }
 
     public void Update(ThuRow row)
     {
+        if (row.Id == 0) return;
         using var cmd = _cx.CreateCommand();
         cmd.CommandText = "UPDATE trials SET operator=$o, plate=$p, impurity=$i, price=$g WHERE id=$id";
         cmd.Parameters.AddWithValue("$o", row.Operator ?? "");

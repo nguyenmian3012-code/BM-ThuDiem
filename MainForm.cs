@@ -39,13 +39,15 @@ public sealed class MainForm : Form
     double _dryG;
     double _best = double.MaxValue;
     double? _wetG;
-    readonly List<(DateTime t, int g)> _wetWin = new();
+    readonly List<int> _wetSeen = new();
     DateTime _lowSince = DateTime.MinValue;
+    DateTime _openAt = DateTime.MinValue;
+    readonly List<DateTime> _trialStarts = new();
 
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.1.0  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.2.0  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -71,12 +73,14 @@ public sealed class MainForm : Form
         var edit = Button("Mở sửa");
         var shifts = Button("Ca cân");
         var rules = Button("Quy tắc");
+        var clear = Button("Clear");
         listen.Click += (_, _) => StartListen();
         stop.Click += (_, _) => StopListen();
         edit.Click += (_, _) => Unlock();
         shifts.Click += (_, _) => EditShifts();
         rules.Click += (_, _) => ShowRules();
-        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules });
+        clear.Click += (_, _) => _chart.ClearDisplay();
+        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear });
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
         _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
         _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
@@ -87,12 +91,25 @@ public sealed class MainForm : Form
         _grid.RowHeadersVisible = false;
         _grid.AllowUserToAddRows = false;
         _grid.Columns.Add(Col("Stt", "Số thứ tự", true));
+        _grid.Columns.Add(Col("When", "Lúc", true));
         _grid.Columns.Add(Col("Diem", "Số điểm", true));
         _grid.Columns.Add(Col("Operator", "Người cân", false));
         _grid.Columns.Add(Col("Plate", "Số xe", false));
         _grid.Columns.Add(Col("Impurity", "% tạp chất", false));
         _grid.Columns.Add(Col("Price", "Giá củ", false));
-        _grid.CellBeginEdit += (_, e) => { if (!_unlocked) e.Cancel = true; };
+        _grid.CellBeginEdit += (_, e) =>
+        {
+            if (!_unlocked) e.Cancel = true;
+            if (e.RowIndex >= 0 && _grid.Rows[e.RowIndex].DataBoundItem is ThuRow row && row.Id == 0)
+                e.Cancel = true;
+        };
+        _grid.CellFormatting += (_, e) =>
+        {
+            if (e.RowIndex < 0 || _grid.Rows[e.RowIndex].DataBoundItem is not ThuRow row || row.Id != 0) return;
+            e.CellStyle.BackColor = Color.FromArgb(90, 48, 18);
+            e.CellStyle.ForeColor = Color.FromArgb(232, 197, 71);
+            e.CellStyle.SelectionBackColor = Color.FromArgb(90, 48, 18);
+        };
         _grid.CellEndEdit += (_, e) =>
         {
             if (e.RowIndex < 0 || _grid.Rows[e.RowIndex].DataBoundItem is not ThuRow row) return;
@@ -230,11 +247,11 @@ public sealed class MainForm : Form
         {
             if (_lowSince == DateTime.MinValue) _lowSince = DateTime.UtcNow;
             if (DateTime.UtcNow - _lowSince < TimeSpan.FromSeconds(1)) return;
-            if (_session && _dryLocked && _wetG is double wet)
+            if (_session && _dryLocked && Wet(out var wet))
                 Commit(_dryG, wet);
             else if (_session && _dryLocked)
             {
-                _state.Text = "không ra phiếu, chưa có cân ướt";
+                _state.Text = "không ra phiếu, chưa thấy cân ướt";
                 EndSession();
             }
             else EndSession();
@@ -248,57 +265,80 @@ public sealed class MainForm : Form
             if (grams > 1000 && rising)
             {
                 _session = true;
+                _openAt = DateTime.Now;
                 _state.Text = "mở phiên";
+                ConsiderDry(grams);
             }
             return;
         }
-        if (grams >= 4500 && grams <= 5500)
+        if (grams >= 4200 && grams <= 5800)
         {
-            var dist = Math.Abs(grams - 5000);
-            if (!_dryLocked || dist < _best || (Math.Abs(dist - _best) < 0.1 && grams < _dryG))
+            ConsiderDry(grams);
+            return;
+        }
+        if (!_dryLocked)
+        {
+            _state.Text = "phiên mở, chưa thấy khô quanh 5000 g";
+            return;
+        }
+        if (grams >= 150 && grams <= 1200)
+        {
+            _wetSeen.Add(grams);
+            if (_wetSeen.Count > 40) _wetSeen.RemoveRange(0, _wetSeen.Count - 40);
+            if (Wet(out var wetNow))
             {
-                _dryG = grams;
-                _best = dist;
-                _dryLocked = true;
-                _dry.Text = grams.ToString("0") + " g";
-                _wet.Text = "—";
-                _eq.Text = "—";
-                _point.Text = "—";
-                _wetG = null;
-                _wetWin.Clear();
-                _state.Text = "khô " + grams.ToString("0") + " g";
+                _wetG = wetNow;
+                _wet.Text = wetNow.ToString("0") + " g";
+                var equiv = StarchTable.EquivalentWet(_dryG, wetNow);
+                _eq.Text = equiv.ToString("0") + " g";
+                if (StarchTable.TryNearest(equiv, out _, out var diem))
+                {
+                    _point.Text = diem.ToString("0.00") + " %";
+                    _state.Text = "ướt ổn " + wetNow.ToString("0") + " g → " + diem.ToString("0.00") + "%";
+                }
+                else
+                {
+                    _point.Text = "ngoài bảng";
+                    _state.Text = "ướt " + equiv.ToString("0") + " g ngoài 280–670";
+                }
             }
             return;
         }
-        if (!_dryLocked || grams >= 1500 || grams < 150) 
+        _state.Text = _wetG is double held
+            ? "ướt " + held.ToString("0") + " g, chờ cân về 0"
+            : "đã có khô, chờ cân ướt";
+    }
+
+    void ConsiderDry(int grams)
+    {
+        if (grams < 4200 || grams > 5800) return;
+        var dist = Math.Abs(grams - 5000);
+        if (_dryLocked && dist > _best) return;
+        if (_dryLocked && Math.Abs(dist - _best) < 0.1 && grams >= _dryG) return;
+        _dryG = grams;
+        _best = dist;
+        _dryLocked = true;
+        _dry.Text = grams.ToString("0") + " g";
+        _wet.Text = "—";
+        _eq.Text = "—";
+        _point.Text = "—";
+        _wetG = null;
+        _wetSeen.Clear();
+        _state.Text = "khô " + grams.ToString("0") + " g";
+    }
+
+    bool Wet(out double wet)
+    {
+        wet = 0;
+        if (_wetG is double held && _wetSeen.Count == 0)
         {
-            _wetWin.Clear();
-            if (_dryLocked) _state.Text = "đã có khô, chờ cân ướt";
-            return;
+            wet = held;
+            return true;
         }
-        if (_wetWin.Count > 0 && Math.Abs(grams - _wetWin[^1].g) > 20) _wetWin.Clear();
-        _wetWin.Add((DateTime.UtcNow, grams));
-        _wetWin.RemoveAll(x => DateTime.UtcNow - x.t > TimeSpan.FromSeconds(3));
-        var span = _wetWin[^1].t - _wetWin[0].t;
-        if (span < TimeSpan.FromSeconds(1) || _wetWin.Count < 3) return;
-        var min = _wetWin.Min(x => x.g);
-        var max = _wetWin.Max(x => x.g);
-        if (max - min > 12) return;
-        var wetNow = _wetWin.Average(x => x.g);
-        _wetG = wetNow;
-        _wet.Text = wetNow.ToString("0") + " g";
-        var equiv = StarchTable.EquivalentWet(_dryG, wetNow);
-        _eq.Text = equiv.ToString("0") + " g";
-        if (StarchTable.TryNearest(equiv, out var listed, out var diem))
-        {
-            _point.Text = diem.ToString("0.00") + " %";
-            _state.Text = "ướt ổn " + wetNow.ToString("0") + " g → " + diem.ToString("0.00") + "%";
-        }
-        else
-        {
-            _point.Text = "ngoài bảng";
-            _state.Text = "ướt " + equiv.ToString("0") + " g ngoài 280–670";
-        }
+        if (_wetSeen.Count == 0) return false;
+        var tail = _wetSeen.Skip(Math.Max(0, _wetSeen.Count - 8)).OrderBy(x => x).ToList();
+        wet = tail[tail.Count / 2];
+        return true;
     }
 
     void Commit(double dry, double wet)
@@ -320,8 +360,18 @@ public sealed class MainForm : Form
             _state.Text = "không chốt, cân ướt ngoài phụ lục";
         }
         _eq.Text = equiv.ToString("0") + " g";
+        RememberTrial();
         EndSession();
         Reload();
+    }
+
+    void RememberTrial()
+    {
+        if (_openAt == DateTime.MinValue) _openAt = DateTime.Now;
+        _trialStarts.Add(_openAt);
+        if (_trialStarts.Count > 30) _trialStarts.RemoveRange(0, _trialStarts.Count - 30);
+        if (_trialStarts.Count >= 10)
+            _chart.ShowFrom(_trialStarts[^10]);
     }
 
     void EndSession()
@@ -329,10 +379,11 @@ public sealed class MainForm : Form
         _session = false;
         _dryLocked = false;
         _wetG = null;
+        _wetSeen.Clear();
         _best = double.MaxValue;
         _prev = 0;
-        _wetWin.Clear();
         _lowSince = DateTime.MinValue;
+        _openAt = DateTime.MinValue;
     }
 
     void Reload()

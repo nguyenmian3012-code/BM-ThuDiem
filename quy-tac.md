@@ -21,9 +21,11 @@ Khung hợp lệ là sáu chữ số viết ngược rồi dấu bằng. Ví d�
 
 Khung cân xe Kingbird (dạng `.10 065420...`) nếu lọt vào COM4 thì bỏ qua và báo trên đèn trạng thái. Không đưa khung đó vào phiên chấm.
 
-Khô được nhận khi số gram nằm từ 4.500 đến 5.500. Giữ mẫu gần 5.000 g nhất. 5.004 g được chọn hơn 5.008 g.
+Khô được nhận khi số gram nằm từ 4.200 đến 5.800. Giữ mẫu gần 5.000 g nhất. 5.004 g được chọn hơn 5.008 g. Mẫu mở phiên, nếu đã nằm trong khoảng này, được tính ngay.
 
-Ướt là cao nguyên ổn định sau khi đã có khô: dưới 1.500 g, từ 150 g trở lên, đứng yên trong khoảng 12 g suốt ít nhất 1 giây. Nhịp rơi nhanh về 0 không ghi đè số ướt. Cân dưới 100 g liên tục 1 giây thì đóng phiên.
+Ướt là cao nguyên thấp sau khi đã có khô, thường 300 g đến 700 g. Phụ lục chuẩn của mẫu đúng 5 kg là 280 g (10,0%) đến 670 g (30,0%). Chương trình nhận cân ướt từ 150 g đến 1.200 g và lấy trung vị của cao nguyên đó. Nước rung quá 12 g không còn làm rơi phiếu. Nhịp rơi nhanh về 0 không ghi đè số ướt. Cân dưới 100 g liên tục 1 giây thì đóng phiên và vẫn ghi phiếu nếu đã có cả khô và ướt.
+
+Biểu đồ chỉ giữ 10 thử điểm gần nhất. Nút Clear xóa nét trên biểu đồ, không xóa sổ. Sổ thử điểm không lưu từng khung COM4. Nếu file vượt 500 MB thì xóa phiếu cũ.
 
 ## Ca cân
 

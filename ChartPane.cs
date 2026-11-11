@@ -4,6 +4,7 @@ public sealed class ChartPane : Control
 {
     public readonly record struct Sample(DateTime T, int G);
     readonly List<Sample> _all = new();
+    DateTime _from = DateTime.MinValue;
     public IReadOnlyList<Sample> Samples => _all;
 
     public ChartPane()
@@ -19,6 +20,20 @@ public sealed class ChartPane : Control
         if (_all.Count > 0 && (t - _all[^1].T).TotalSeconds < 1.2) return;
         _all.Add(new Sample(t, g));
         if (_all.Count > 20000) _all.RemoveRange(0, _all.Count - 16000);
+        Invalidate();
+    }
+
+    public void ShowFrom(DateTime from)
+    {
+        _from = from;
+        if (from > DateTime.MinValue)
+            _all.RemoveAll(s => s.T < from.AddSeconds(-2));
+        Invalidate();
+    }
+
+    public void ClearDisplay()
+    {
+        _all.Clear();
         Invalidate();
     }
 
@@ -43,7 +58,8 @@ public sealed class ChartPane : Control
         g.DrawString("6000", font, brush, 2, plot.Top - 2);
         g.DrawString("0", font, brush, 18, y0 - 8);
         g.DrawString("-1500", font, brush, 2, plot.Bottom - 12);
-        var view = Compress(_all);
+        var src = _from == DateTime.MinValue ? _all : _all.Where(s => s.T >= _from.AddSeconds(-2)).ToList();
+        var view = Compress(src);
         if (view.Count < 2)
         {
             g.DrawString("Chưa đủ mẫu COM4", font, brush, plot.Left + 8, plot.Top + 8);
