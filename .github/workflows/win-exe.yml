@@ -16,13 +16,13 @@ jobs:
       - run: dotnet publish BMThuDiem.csproj -c Release -r win-x64 --self-contained true -o publish
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path publish\* -DestinationPath BM-ThuDiem-1.0.0.zip
+        run: Compress-Archive -Path publish\* -DestinationPath BM-ThuDiem-1.1.0.zip
       - name: Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v1.0.0 --yes --cleanup-tag || true
-          gh release create v1.0.0 BM-ThuDiem-1.0.0.zip \
-            --title "BM-ThuDiem 1.0.0" \
-            --notes "Chuong trinh cham diem bot rieng. Chi nghe COM4. Tra phu luc 1 QĐ 228/1999 theo can uot."
+          gh release delete v1.1.0 --yes --cleanup-tag || true
+          gh release create v1.1.0 BM-ThuDiem-1.1.0.zip \
+            --title "BM-ThuDiem 1.1.0" \
+            --notes "Bieu do COM4, cat doan dung yen 45 giay. Phieu gui qua LocalAppData de AutoCan doc duoc."

@@ -10,6 +10,7 @@ public sealed class ListenCom4 : IDisposable
     string _buf = "";
 
     public event Action<string>? Frame;
+    public event Action<string>? Chunk;
 
     public void Open()
     {
@@ -21,6 +22,7 @@ public sealed class ListenCom4 : IDisposable
             RtsEnable = false,
             ReadTimeout = 200,
             Encoding = Encoding.ASCII,
+            ReceivedBytesThreshold = 1,
         };
         sp.DataReceived += OnData;
         sp.Open();
@@ -30,15 +32,33 @@ public sealed class ListenCom4 : IDisposable
         _sp = sp;
     }
 
+    public void Pump()
+    {
+        SerialPort? sp;
+        lock (_gate) sp = _sp;
+        if (sp == null || !sp.IsOpen) return;
+        try
+        {
+            if (sp.BytesToRead > 0) ReadNow(sp);
+        }
+        catch { }
+    }
+
     void OnData(object? sender, SerialDataReceivedEventArgs e)
     {
         SerialPort? sp;
         lock (_gate) sp = _sp;
         if (sp == null || !sp.IsOpen) return;
+        try { ReadNow(sp); } catch { }
+    }
+
+    void ReadNow(SerialPort sp)
+    {
         string chunk;
         try { chunk = sp.ReadExisting(); }
         catch { return; }
         if (string.IsNullOrEmpty(chunk)) return;
+        try { Chunk?.Invoke(chunk); } catch { }
         lock (_gate)
         {
             _buf += chunk;

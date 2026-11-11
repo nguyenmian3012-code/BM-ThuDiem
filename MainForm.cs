@@ -27,6 +27,10 @@ public sealed class MainForm : Form
     bool _kingbird;
     DateTime _sampleAt = DateTime.MinValue;
     DateTime _rawAt = DateTime.MinValue;
+    readonly ChartPane _chart = new();
+    DateTime _chartAt = DateTime.MinValue;
+    string _chunk = "";
+    bool _sawByte;
     bool _listening;
     bool _unlocked;
     bool _session;
@@ -41,9 +45,9 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.0.0  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.1.0  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
-        Height = 740;
+        Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(42, 10, 18);
         ForeColor = Color.FromArgb(246, 238, 230);
@@ -73,7 +77,6 @@ public sealed class MainForm : Form
         shifts.Click += (_, _) => EditShifts();
         rules.Click += (_, _) => ShowRules();
         bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules });
-
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
         _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
         _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
@@ -101,6 +104,7 @@ public sealed class MainForm : Form
         split.Panel2.Controls.Add(rawHost);
         split.Panel2.Controls.Add(new Label { Text = "RAW COM4  ·  1,5 giây", Dock = DockStyle.Top, Height = 24, ForeColor = Color.FromArgb(232, 197, 71) });
         Controls.Add(split);
+        Controls.Add(_chart);
         Controls.Add(bar);
         Controls.Add(top);
         Load += (_, _) =>
@@ -126,6 +130,7 @@ public sealed class MainForm : Form
         {
             _port = new ListenCom4();
             _port.Frame += OnFrame;
+            _port.Chunk += s => { lock (_gate) { _chunk = s; _sawByte = true; _sampleAt = DateTime.UtcNow; } };
             _port.Open();
             _listening = true;
             SetLamp(_com, true, "COM4 đang nghe 1200 8N1");
@@ -183,19 +188,26 @@ public sealed class MainForm : Form
         }
         var auto = AutoCanAlive();
         SetLamp(_auto, auto, auto ? "AutoCan đang chạy" : "AutoCan tắt, phiếu chờ gửi");
+        try { _port?.Pump(); } catch { }
         try { File.WriteAllText(Path.Combine(_store.DataDir, "thudiem.host"), DateTimeOffset.Now.ToString("o")); } catch { }
-        if (raw.Length > 0 && DateTime.UtcNow - _rawAt >= TimeSpan.FromMilliseconds(1500))
+        var shown = raw.Length > 0 ? raw : OneLine(_chunk);
+        if (shown.Length > 0 && DateTime.UtcNow - _rawAt >= TimeSpan.FromMilliseconds(1500))
         {
             _rawAt = DateTime.UtcNow;
-            _raw.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + raw + Environment.NewLine);
+            _raw.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + shown + Environment.NewLine);
             if (_raw.TextLength > 4000) _raw.Text = _raw.Text[^2000..];
         }
         MarkDone();
         if (!_listening) return;
-        if (at == DateTime.MinValue || DateTime.UtcNow - at > TimeSpan.FromSeconds(3))
+        if (!_sawByte || at == DateTime.MinValue || DateTime.UtcNow - at > TimeSpan.FromSeconds(3))
         {
-            _state.Text = "COM4 im";
+            _state.Text = _listening && !_sawByte ? "COM4 mở, chưa có byte" : "COM4 im";
             return;
+        }
+        if (_chartAt == DateTime.MinValue || DateTime.UtcNow - _chartAt >= TimeSpan.FromMilliseconds(1500))
+        {
+            _chartAt = DateTime.UtcNow;
+            _chart.Add(DateTime.Now, grams);
         }
         if (king)
         {
@@ -333,7 +345,12 @@ public sealed class MainForm : Form
 
     void MarkDone()
     {
-        var dir = Path.Combine(_store.DataDir, "starch_done");
+        Sweep(Path.Combine(_store.DataDir, "starch_done"));
+        Sweep(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BmCancomp", "data", "starch_done"));
+    }
+
+    void Sweep(string dir)
+    {
         if (!Directory.Exists(dir)) return;
         foreach (var file in Directory.EnumerateFiles(dir, "td*.json"))
         {
@@ -342,6 +359,13 @@ public sealed class MainForm : Form
                 _store.Mark(id, "đã giao");
             try { File.Delete(file); } catch { }
         }
+    }
+
+    static string OneLine(string chunk)
+    {
+        if (chunk.Length == 0) return "";
+        var ascii = new string(chunk.Select(c => c >= 32 && c < 127 ? c : '·').ToArray()).Trim();
+        return ascii.Length > 80 ? ascii[..80] : ascii;
     }
 
     static bool AutoCanAlive()

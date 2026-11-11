@@ -110,8 +110,6 @@ public sealed class TrialStore
 
     public void HandOff(long id, double diem, string who, double dry, double wet, double equiv, int listed)
     {
-        var dir = Path.Combine(DataDir, "starch_out");
-        Directory.CreateDirectory(dir);
         var payload = new
         {
             id = "td" + id.ToString(CultureInfo.InvariantCulture),
@@ -122,7 +120,29 @@ public sealed class TrialStore
             customer = who,
             raw = $"kho {dry:0} g | uot {wet:0} g | doi {equiv:0} g | moc {listed} g | {who}",
         };
-        File.WriteAllText(Path.Combine(dir, payload.id + ".json"), JsonSerializer.Serialize(payload));
+        var json = JsonSerializer.Serialize(payload);
+        var name = payload.id + ".json";
+        var local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BmCancomp", "data", "starch_out");
+        var common = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "BmCancomp", "data", "starch_out");
+        if (!TryDrop(local, name, json) && !TryDrop(common, name, json))
+            throw new IOException("Không thả được phiếu thử điểm cho AutoCan.");
+    }
+
+    static bool TryDrop(string dir, string name, string json)
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, name);
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, path, true);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Mark(long id, string sync)
