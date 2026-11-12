@@ -201,7 +201,7 @@ public sealed class TrialStore
             {
                 Id = rd.GetInt64(0),
                 When = when.ToString("HH:mm:ss"),
-                Day = when.Date,
+                Day = WorkDay(when),
                 Diem = diem,
                 Operator = rd.GetString(3),
                 Plate = rd.GetString(4),
@@ -217,11 +217,62 @@ public sealed class TrialStore
         foreach (var row in rows)
         {
             if (prev != null && row.Day != prev.Value)
-                shown.Add(new ThuRow { Id = 0, When = "—— hết " + row.Day.ToString("dd/MM") + " ——", Day = row.Day });
+                shown.Add(new ThuRow
+                {
+                    Id = 0,
+                    When = "Hết " + row.Day.ToString("dd/MM") + " Bắt đầu " + prev.Value.ToString("dd/MM"),
+                    Day = row.Day,
+                });
             shown.Add(row);
             prev = row.Day;
         }
         return shown;
+    }
+
+    public sealed record AvgBox(string Name, double Avg, DateTime Day, int Count);
+
+    public List<AvgBox> Averages()
+    {
+        var names = ShiftLines()
+            .Select(line => line.Length > 6 ? line[6..].Trim() : "")
+            .Where(name => name.Length > 0)
+            .Distinct()
+            .Take(2)
+            .ToList();
+        if (names.Count == 0) names.AddRange(["a Phước", "a Đấu"]);
+        var rows = new List<(string Who, DateTime Day, double Diem)>();
+        using (var cmd = _cx.CreateCommand())
+        {
+            cmd.CommandText = "SELECT ts, diem, IFNULL(operator,'') FROM trials WHERE diem IS NOT NULL";
+            using var rd = cmd.ExecuteReader();
+            while (rd.Read())
+            {
+                if (!DateTimeOffset.TryParse(rd.GetString(0), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto))
+                    continue;
+                rows.Add((rd.GetString(2).Trim(), WorkDay(dto.LocalDateTime), rd.GetDouble(1)));
+            }
+        }
+        var list = new List<AvgBox>();
+        foreach (var name in names)
+        {
+            var mine = rows.Where(r => string.Equals(r.Who, name, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (mine.Count == 0)
+            {
+                list.Add(new AvgBox(name, 0, DateTime.MinValue, 0));
+                continue;
+            }
+            var day = mine.Max(r => r.Day);
+            var today = mine.Where(r => r.Day == day).Select(r => r.Diem).ToList();
+            list.Add(new AvgBox(name, today.Average(), day, today.Count));
+        }
+        return list;
+    }
+
+    public static DateTime WorkDay(DateTime local)
+    {
+        var day = local.Date;
+        if (local.Hour < 7) day = day.AddDays(-1);
+        return day;
     }
 
     public void Update(ThuRow row)

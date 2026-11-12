@@ -1,9 +1,9 @@
-Cập nhật riêng BM-ThuDiem 1.2.0, không đè thư mục AutoCan.
+Cập nhật riêng BM-ThuDiem 1.3.0, không đè thư mục AutoCan.
 
 1. Đóng cửa sổ BM-ThuDiem cũ nếu đang mở.
-2. Tải BM-ThuDiem-1.2.0.zip từ phần Releases của repo BM-ThuDiem.
+2. Tải BM-ThuDiem-1.3.0.zip từ phần Releases của repo BM-ThuDiem.
 3. Giải nén vào một thư mục riêng, ví dụ C:\BM-ThuDiem. Không giải vào thư mục AutoCan.
-4. Chạy BM-ThuDiem.exe. Tiêu đề cửa sổ phải ghi 1.2.0 và đang nghe COM4.
+4. Chạy BM-ThuDiem.exe. Tiêu đề cửa sổ phải ghi 1.3.0 và đang nghe COM4. Đóng cửa sổ thì hỏi mã admin.
 5. AutoCan vẫn mở như cũ để đưa phiếu lên canxe.redtigerhead.com. Không cần cài lại AutoCan cho những lần chỉ sửa điểm bột.
 6. Lần cập nhật sau: đóng BM-ThuDiem.exe, giải nén bản mới đè đúng thư mục C:\BM-ThuDiem, mở lại.
 

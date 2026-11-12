@@ -12,6 +12,9 @@ public sealed class MainForm : Form
     readonly Label _state = new() { AutoSize = true, ForeColor = Color.FromArgb(232, 197, 71), Text = "chờ COM4" };
     readonly Label _com = Lamp();
     readonly Label _auto = Lamp();
+    readonly ComDot _comDot = new();
+    readonly Label _avgA = Value("—");
+    readonly Label _avgB = Value("—");
     readonly TextBox _raw = new()
     {
         Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
@@ -47,7 +50,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.2.0  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.3.0  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -55,6 +58,7 @@ public sealed class MainForm : Form
         ForeColor = Color.FromArgb(246, 238, 230);
         Font = new Font("Segoe UI", 10f);
 
+        TrySetIcon();
         var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 188, Padding = new Padding(12, 8, 12, 4), WrapContents = false };
         top.Controls.Add(Card("Số g hiện tại", _live));
         top.Controls.Add(Card("Chuỗi khô", _dry));
@@ -62,12 +66,16 @@ public sealed class MainForm : Form
         top.Controls.Add(Card("Ướt quy về 5 kg", _eq));
         top.Controls.Add(Card("Số điểm", _point));
         var lamps = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, Padding = new Padding(8, 4, 0, 0) };
-        lamps.Controls.Add(_com);
+        var comRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        _comDot.Margin = new Padding(0, 6, 6, 0);
+        comRow.Controls.Add(_comDot);
+        comRow.Controls.Add(_com);
+        lamps.Controls.Add(comRow);
         lamps.Controls.Add(_auto);
         lamps.Controls.Add(_state);
         top.Controls.Add(lamps);
 
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 48, Padding = new Padding(12, 6, 12, 6) };
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 86, Padding = new Padding(12, 6, 12, 6) };
         var listen = Button("Nghe COM4");
         var stop = Button("Ngừng");
         var edit = Button("Mở sửa");
@@ -80,7 +88,7 @@ public sealed class MainForm : Form
         shifts.Click += (_, _) => EditShifts();
         rules.Click += (_, _) => ShowRules();
         clear.Click += (_, _) => _chart.ClearDisplay();
-        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear });
+        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
         _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
         _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
@@ -114,6 +122,7 @@ public sealed class MainForm : Form
         {
             if (e.RowIndex < 0 || _grid.Rows[e.RowIndex].DataBoundItem is not ThuRow row) return;
             _store.Update(row);
+            ShowAverages();
         };
         split.Panel1.Controls.Add(_grid);
         var rawHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
@@ -135,7 +144,7 @@ public sealed class MainForm : Form
             }
             catch { }
         };
-        FormClosing += (_, _) => StopListen();
+        FormClosing += OnFormClosing;
         _tick.Tick += (_, _) => Pulse();
         _tick.Start();
     }
@@ -155,6 +164,7 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             SetLamp(_com, false, "COM4 " + ex.Message);
+            _comDot.Set(ComDot.Kind.Bad);
             _state.Text = "không mở được COM4";
         }
     }
@@ -165,6 +175,7 @@ public sealed class MainForm : Form
         try { _port?.Dispose(); } catch { }
         _port = null;
         SetLamp(_com, false, "COM4 ngừng");
+        _comDot.Set(ComDot.Kind.Bad);
     }
 
     int _serial;
@@ -205,6 +216,7 @@ public sealed class MainForm : Form
         }
         var auto = AutoCanAlive();
         SetLamp(_auto, auto, auto ? "AutoCan đang chạy" : "AutoCan tắt, phiếu chờ gửi");
+        PaintCom(at);
         try { _port?.Pump(); } catch { }
         try { File.WriteAllText(Path.Combine(_store.DataDir, "thudiem.host"), DateTimeOffset.Now.ToString("o")); } catch { }
         var shown = raw.Length > 0 ? raw : OneLine(_chunk);
@@ -392,6 +404,107 @@ public sealed class MainForm : Form
         _rows.AddRange(_store.Recent());
         _grid.DataSource = null;
         _grid.DataSource = _rows;
+        ShowAverages();
+    }
+
+    void ShowAverages()
+    {
+        var boxes = _store.Averages();
+        PaintAvg(_avgA, boxes.Count > 0 ? boxes[0] : null);
+        PaintAvg(_avgB, boxes.Count > 1 ? boxes[1] : null);
+    }
+
+    static void PaintAvg(Label label, TrialStore.AvgBox? box)
+    {
+        if (box is null || box.Count == 0)
+        {
+            label.Text = "—";
+            return;
+        }
+        label.Text = box.Avg.ToString("0.00") + "\n" + box.Day.ToString("dd/MM");
+    }
+
+    void PaintCom(DateTime at)
+    {
+        if (!_listening)
+        {
+            _comDot.Set(ComDot.Kind.Bad);
+            return;
+        }
+        var live = _sawByte && at != DateTime.MinValue && DateTime.UtcNow - at <= TimeSpan.FromSeconds(3);
+        _comDot.Set(live ? ComDot.Kind.Ok : ComDot.Kind.Wait);
+    }
+
+    bool _allowClose;
+    bool _closeAsked;
+
+    void OnFormClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (_allowClose || e.CloseReason is CloseReason.WindowsShutDown or CloseReason.TaskManagerClosing)
+        {
+            StopListen();
+            return;
+        }
+        e.Cancel = true;
+        if (_closeAsked) return;
+        _closeAsked = true;
+        BeginInvoke(AskThenClose);
+    }
+
+    void AskThenClose()
+    {
+        try
+        {
+            if (!AskPin())
+            {
+                _closeAsked = false;
+                return;
+            }
+            StopListen();
+            _allowClose = true;
+            Close();
+        }
+        catch
+        {
+            _closeAsked = false;
+        }
+    }
+
+    bool AskPin()
+    {
+        using var box = new Form
+        {
+            Text = "Mã admin",
+            Width = 320,
+            Height = 150,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+        };
+        var tb = new TextBox { Location = new Point(24, 24), Width = 250, UseSystemPasswordChar = true };
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(180, 64) };
+        box.Controls.Add(tb);
+        box.Controls.Add(ok);
+        box.AcceptButton = ok;
+        if (box.ShowDialog(this) != DialogResult.OK) return false;
+        if (tb.Text.Trim() != _store.AdminPin())
+        {
+            MessageBox.Show(this, "Sai mã.");
+            return false;
+        }
+        return true;
+    }
+
+    void TrySetIcon()
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "assets", "app.ico");
+            if (!File.Exists(path)) path = Path.Combine(AppContext.BaseDirectory, "app.ico");
+            if (File.Exists(path)) Icon = new Icon(path);
+        }
+        catch { }
     }
 
     void MarkDone()
@@ -483,6 +596,16 @@ public sealed class MainForm : Form
         lamp.ForeColor = on ? Color.FromArgb(94, 184, 108) : Color.FromArgb(201, 180, 173);
     }
 
+    static Panel Mini(string title, Label value)
+    {
+        var p = new Panel { Width = 150, Height = 68, Margin = new Padding(18, 0, 0, 0), BackColor = Color.FromArgb(62, 18, 28) };
+        p.Controls.Add(new Label { Text = title, Location = new Point(8, 4), AutoSize = true, ForeColor = Color.FromArgb(232, 197, 71) });
+        value.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+        value.Location = new Point(8, 24);
+        p.Controls.Add(value);
+        return p;
+    }
+
     static Panel Card(string title, Label value)
     {
         var p = new Panel { Width = 176, Height = 88, Margin = new Padding(0, 0, 8, 0), BackColor = Color.FromArgb(62, 18, 28) };
@@ -503,4 +626,38 @@ public sealed class MainForm : Form
         DataPropertyName = prop, HeaderText = header, ReadOnly = readOnly,
         AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
     };
+}
+
+sealed class ComDot : Control
+{
+    public enum Kind { Bad, Wait, Ok }
+    Kind _kind = Kind.Bad;
+
+    public ComDot()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        Size = new Size(16, 16);
+        TabStop = false;
+    }
+
+    public void Set(Kind kind)
+    {
+        if (_kind == kind) return;
+        _kind = kind;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var color = _kind switch
+        {
+            Kind.Ok => Color.FromArgb(94, 184, 108),
+            Kind.Wait => Color.FromArgb(232, 197, 71),
+            _ => Color.FromArgb(214, 48, 49),
+        };
+        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        var s = Math.Min(Width, Height) - 2;
+        using var brush = new SolidBrush(color);
+        e.Graphics.FillEllipse(brush, 1, 1, s, s);
+    }
 }
