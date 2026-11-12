@@ -1,6 +1,6 @@
 # AGENTS.md — BM-ThuDiem
 
-Chương trình riêng, bản **1.3.1**. Chỉ nghe COM4. Không nghe Kingbird. Không mở COM5.
+Chương trình riêng, bản **1.3.2**. Chỉ nghe COM4. Không nghe Kingbird. Không mở COM5.
 
 Đích chung của dự án nằm ở whitepaper repo cha: mẫu củ mì ra một điểm bột khớp đèn máy và sổ cũ, không gõ điểm trên bàn.
 
@@ -13,6 +13,6 @@ Chương trình riêng, bản **1.3.1**. Chỉ nghe COM4. Không nghe Kingbird. 
 - Không tính khô trừ ướt. Không hủy phiếu chỉ vì nước rung.
 - Cân dưới 100 g một giây thì đóng phiên. Có cả khô và ướt thì ghi.
 - Sổ `thudiem.db`, trần 500 MB. Nút Clear chỉ xóa nét biểu đồ.
-- Phiếu hợp lệ thả file cho AutoCan gửi. App này không tự POST mill và không mở `cancomp.db`.
+- Điểm dưới 15 không vào bình quân và không giao AutoCan. Ô Lọc dưới 15 đang bật thì ẩn các phiếu đó. Admin chọn phiếu rồi bấm Xóa phiếu, nhập mã. App không tự POST mill và không mở `cancomp.db`.
 
 Đừng sửa AutoCan khi chỉ đổi cách chấm.

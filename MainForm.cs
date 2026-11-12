@@ -46,11 +46,12 @@ public sealed class MainForm : Form
     DateTime _lowSince = DateTime.MinValue;
     DateTime _openAt = DateTime.MinValue;
     readonly List<DateTime> _trialStarts = new();
+    CheckBox _hideLow = null!;
 
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.3.1  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.3.2  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -82,13 +83,18 @@ public sealed class MainForm : Form
         var shifts = Button("Ca cân");
         var rules = Button("Quy tắc");
         var clear = Button("Clear");
+        var drop = Button("Xóa phiếu");
+        var hideLow = new CheckBox { Text = "Lọc dưới 15", AutoSize = true, Checked = true, ForeColor = Color.FromArgb(246, 238, 230), Margin = new Padding(12, 8, 8, 0) };
         listen.Click += (_, _) => StartListen();
         stop.Click += (_, _) => StopListen();
         edit.Click += (_, _) => Unlock();
         shifts.Click += (_, _) => EditShifts();
         rules.Click += (_, _) => ShowRules();
         clear.Click += (_, _) => _chart.ClearDisplay();
-        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
+        drop.Click += (_, _) => DeleteChosen();
+        hideLow.CheckedChanged += (_, _) => Reload();
+        _hideLow = hideLow;
+        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, drop, hideLow, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
         _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
         _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
@@ -98,6 +104,8 @@ public sealed class MainForm : Form
         _grid.EnableHeadersVisualStyles = false;
         _grid.RowHeadersVisible = false;
         _grid.AllowUserToAddRows = false;
+        _grid.MultiSelect = true;
+        _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         _grid.Columns.Add(Col("Stt", "Số thứ tự", true));
         _grid.Columns.Add(Col("When", "Lúc", true));
         _grid.Columns.Add(Col("Diem", "Số điểm", true));
@@ -113,10 +121,12 @@ public sealed class MainForm : Form
         };
         _grid.CellFormatting += (_, e) =>
         {
-            if (e.RowIndex < 0 || _grid.Rows[e.RowIndex].DataBoundItem is not ThuRow row || row.Id != 0) return;
-            e.CellStyle.BackColor = Color.FromArgb(90, 48, 18);
+            if (e.RowIndex < 0 || _grid.Rows[e.RowIndex].DataBoundItem is not ThuRow row) return;
+            var low = row.Score is < 15;
+            if (row.Id != 0 && !low) return;
+            e.CellStyle.BackColor = low ? Color.FromArgb(92, 28, 28) : Color.FromArgb(90, 48, 18);
             e.CellStyle.ForeColor = Color.FromArgb(232, 197, 71);
-            e.CellStyle.SelectionBackColor = Color.FromArgb(90, 48, 18);
+            e.CellStyle.SelectionBackColor = low ? Color.FromArgb(92, 28, 28) : Color.FromArgb(90, 48, 18);
         };
         _grid.CellEndEdit += (_, e) =>
         {
@@ -359,14 +369,20 @@ public sealed class MainForm : Form
         {
             var equiv = StarchTable.EquivalentWet(dry, wet);
             var ok = StarchTable.TryNearest(equiv, out var listed, out var diem);
+            var low = ok && diem < 15;
             var who = _store.OperatorNow();
-            var note = ok ? "" : "ngoài bảng";
+            var note = !ok ? "ngoài bảng" : low ? "dưới 15" : "";
             var id = _store.Add(ok ? diem : null, who, dry, wet, equiv, listed, "", note);
-            if (ok)
+            if (ok && !low)
             {
                 _store.HandOff(id, diem, who, dry, wet, equiv, listed);
                 _point.Text = diem.ToString("0.00") + " %";
                 _state.Text = "đã chốt " + diem.ToString("0.00") + "%";
+            }
+            else if (low)
+            {
+                _point.Text = diem.ToString("0.00") + " %";
+                _state.Text = "dưới 15, không tính";
             }
             else
             {
@@ -407,10 +423,31 @@ public sealed class MainForm : Form
         _openAt = DateTime.MinValue;
     }
 
+    void DeleteChosen()
+    {
+        var ids = new List<long>();
+        foreach (DataGridViewRow line in _grid.SelectedRows)
+        {
+            if (line.DataBoundItem is ThuRow row && row.Id > 0 && !ids.Contains(row.Id))
+                ids.Add(row.Id);
+        }
+        if (ids.Count == 0)
+        {
+            _state.Text = "chọn phiếu lỗi rồi bấm Xóa phiếu";
+            return;
+        }
+        if (!AskPin()) return;
+        if (MessageBox.Show(this, "Xóa " + ids.Count + " phiếu đã chọn?", "Xóa phiếu", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+            return;
+        _store.Delete(ids);
+        Reload();
+        _state.Text = "đã xóa " + ids.Count + " phiếu";
+    }
+
     void Reload()
     {
         _rows.Clear();
-        _rows.AddRange(_store.Recent());
+        _rows.AddRange(_store.Recent().Where(row => row.Id == 0 || !_hideLow.Checked || row.Score is not < 15));
         _grid.DataSource = null;
         _grid.DataSource = _rows;
         ShowAverages();

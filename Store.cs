@@ -14,6 +14,7 @@ public sealed class ThuRow
     public string Plate { get; set; } = "";
     public string Impurity { get; set; } = "";
     public string Price { get; set; } = "";
+    public double? Score { get; set; }
     public DateTime Day { get; set; }
 }
 
@@ -229,7 +230,8 @@ public sealed class TrialStore
         while (rd.Read())
         {
             var note = rd.GetString(7);
-            var diem = rd.IsDBNull(2) ? note : rd.GetDouble(2).ToString("0.00");
+            double? score = rd.IsDBNull(2) ? null : rd.GetDouble(2);
+            var diem = score is null ? note : score.Value < 15 ? score.Value.ToString("0.00") + " dưới 15" : score.Value.ToString("0.00");
             var when = DateTime.Now;
             if (DateTimeOffset.TryParse(rd.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto))
                 when = dto.LocalDateTime;
@@ -239,6 +241,7 @@ public sealed class TrialStore
                 When = when.ToString("HH:mm:ss"),
                 Day = WorkDay(when),
                 Diem = diem,
+                Score = score,
                 Operator = rd.GetString(3),
                 Plate = rd.GetString(4),
                 Impurity = rd.GetString(5),
@@ -279,7 +282,7 @@ public sealed class TrialStore
         var rows = new List<(string Who, DateTime Day, double Diem)>();
         using (var cmd = _cx.CreateCommand())
         {
-            cmd.CommandText = "SELECT ts, diem, IFNULL(operator,'') FROM trials WHERE diem IS NOT NULL";
+            cmd.CommandText = "SELECT ts, diem, IFNULL(operator,'') FROM trials WHERE diem IS NOT NULL AND diem >= 15";
             using var rd = cmd.ExecuteReader();
             while (rd.Read())
             {
@@ -309,6 +312,26 @@ public sealed class TrialStore
         var day = local.Date;
         if (local.Hour < 7) day = day.AddDays(-1);
         return day;
+    }
+
+    public void Delete(IReadOnlyCollection<long> ids)
+    {
+        foreach (var id in ids)
+        {
+            if (id <= 0) continue;
+            using var cmd = _cx.CreateCommand();
+            cmd.CommandText = "DELETE FROM trials WHERE id=$id";
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.ExecuteNonQuery();
+            var name = "td" + id.ToString(CultureInfo.InvariantCulture) + ".json";
+            TryRemove(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "BmCancomp", "data", "starch_out", name));
+            TryRemove(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BmCancomp", "data", "starch_out", name));
+        }
+    }
+
+    static void TryRemove(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
     public void Update(ThuRow row)

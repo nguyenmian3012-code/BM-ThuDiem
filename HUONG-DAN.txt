@@ -1,9 +1,9 @@
-Cập nhật riêng BM-ThuDiem 1.3.1, không đè thư mục AutoCan.
+Cập nhật riêng BM-ThuDiem 1.3.2, không đè thư mục AutoCan.
 
 1. Đóng cửa sổ BM-ThuDiem cũ nếu đang mở.
-2. Tải BM-ThuDiem-1.3.1.zip từ phần Releases của repo BM-ThuDiem.
+2. Tải BM-ThuDiem-1.3.2.zip từ phần Releases của repo BM-ThuDiem.
 3. Giải nén đè đúng thư mục đang chạy, ví dụ C:\BM-ThuDiem. Không giải vào thư mục AutoCan. Không xóa thudiem.db.
-4. Chạy BM-ThuDiem.exe. Tiêu đề cửa sổ phải ghi 1.3.1 và đang nghe COM4. Đóng cửa sổ thì hỏi mã admin.
+4. Chạy BM-ThuDiem.exe. Tiêu đề cửa sổ phải ghi 1.3.2 và đang nghe COM4. Đóng cửa sổ thì hỏi mã admin.
 5. AutoCan vẫn mở như cũ để đưa phiếu lên canxe.redtigerhead.com. Không cần cài lại AutoCan cho những lần chỉ sửa điểm bột.
 
-Phiếu nằm ở thudiem.db, không mở cancomp.db. Bản này mở sổ cũ và cho phép phiếu không có số điểm. Cân ướt ngoài 280–670 g ghi "ngoài bảng", không hiện hộp lỗi .NET. Clear trên biểu đồ không xóa sổ. File quá 500 MB thì chương trình tự xóa phiếu cũ.
+Phiếu nằm ở thudiem.db. Điểm dưới 15 không vào bình quân và không gửi sang AutoCan. Ô Lọc dưới 15 đang bật thì ẩn các phiếu đó; bỏ dấu để thấy rồi chọn, bấm Xóa phiếu, nhập mã admin. Clear trên biểu đồ không xóa sổ.
