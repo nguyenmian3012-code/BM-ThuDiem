@@ -70,11 +70,47 @@ public sealed class TrialStore
         Try("ALTER TABLE trials ADD COLUMN equiv REAL");
         Try("ALTER TABLE trials ADD COLUMN listed INTEGER");
         Try("ALTER TABLE trials ADD COLUMN note TEXT");
+        RelaxDiem();
         using var n = _cx.CreateCommand();
         n.CommandText = "SELECT COUNT(*) FROM shifts";
         if (Convert.ToInt32(n.ExecuteScalar()) == 0)
             SaveShifts("07:00 a Phước\n07:00 a Đấu");
         Trim();
+    }
+
+    void RelaxDiem()
+    {
+        using var probe = _cx.CreateCommand();
+        probe.CommandText = "SELECT \"notnull\" FROM pragma_table_info('trials') WHERE name = 'diem'";
+        var flag = probe.ExecuteScalar();
+        if (flag is null || Convert.ToInt32(flag) == 0) return;
+        var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var cols = _cx.CreateCommand())
+        {
+            cols.CommandText = "SELECT name FROM pragma_table_info('trials')";
+            using var rd = cols.ExecuteReader();
+            while (rd.Read()) have.Add(rd.GetString(0));
+        }
+        var want = new[] { "id", "ts", "diem", "operator", "plate", "impurity", "price", "dry", "wet", "raw", "sync", "equiv", "listed", "note" };
+        var keep = want.Where(have.Contains).ToArray();
+        var list = string.Join(", ", keep);
+        using var tx = _cx.BeginTransaction();
+        Exec(tx, "DROP TABLE IF EXISTS trials_new");
+        Exec(tx, "CREATE TABLE trials_new (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, diem REAL, operator TEXT, plate TEXT, impurity TEXT, price TEXT, dry REAL, wet REAL, equiv REAL, listed INTEGER, raw TEXT, note TEXT, sync TEXT)");
+        Exec(tx, "INSERT INTO trials_new (" + list + ") SELECT " + list + " FROM trials");
+        if (have.Contains("delta"))
+            Exec(tx, "UPDATE trials_new SET equiv = (SELECT delta FROM trials o WHERE o.id = trials_new.id) WHERE equiv IS NULL");
+        Exec(tx, "DROP TABLE trials");
+        Exec(tx, "ALTER TABLE trials_new RENAME TO trials");
+        tx.Commit();
+    }
+
+    void Exec(SqliteTransaction tx, string sql)
+    {
+        using var cmd = _cx.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
     }
 
     void Try(string sql)

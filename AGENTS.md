@@ -1,6 +1,6 @@
 # AGENTS.md — BM-ThuDiem
 
-Chương trình riêng, bản **1.2.0**. Chỉ nghe COM4. Không nghe Kingbird. Không mở COM5.
+Chương trình riêng, bản **1.3.1**. Chỉ nghe COM4. Không nghe Kingbird. Không mở COM5.
 
 Đích chung của dự án nằm ở whitepaper repo cha: mẫu củ mì ra một điểm bột khớp đèn máy và sổ cũ, không gõ điểm trên bàn.
 

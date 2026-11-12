@@ -50,7 +50,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.3.0  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.3.1  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -355,26 +355,35 @@ public sealed class MainForm : Form
 
     void Commit(double dry, double wet)
     {
-        var equiv = StarchTable.EquivalentWet(dry, wet);
-        var ok = StarchTable.TryNearest(equiv, out var listed, out var diem);
-        var who = _store.OperatorNow();
-        var note = ok ? "" : "ngoài bảng";
-        var id = _store.Add(ok ? diem : null, who, dry, wet, equiv, listed, "", note);
-        if (ok)
+        try
         {
-            _store.HandOff(id, diem, who, dry, wet, equiv, listed);
-            _point.Text = diem.ToString("0.00") + " %";
-            _state.Text = "đã chốt " + diem.ToString("0.00") + "%";
+            var equiv = StarchTable.EquivalentWet(dry, wet);
+            var ok = StarchTable.TryNearest(equiv, out var listed, out var diem);
+            var who = _store.OperatorNow();
+            var note = ok ? "" : "ngoài bảng";
+            var id = _store.Add(ok ? diem : null, who, dry, wet, equiv, listed, "", note);
+            if (ok)
+            {
+                _store.HandOff(id, diem, who, dry, wet, equiv, listed);
+                _point.Text = diem.ToString("0.00") + " %";
+                _state.Text = "đã chốt " + diem.ToString("0.00") + "%";
+            }
+            else
+            {
+                _point.Text = "ngoài bảng";
+                _state.Text = "không chốt, cân ướt ngoài phụ lục";
+            }
+            _eq.Text = equiv.ToString("0") + " g";
+            RememberTrial();
+            EndSession();
+            Reload();
         }
-        else
+        catch (Exception ex)
         {
-            _point.Text = "ngoài bảng";
-            _state.Text = "không chốt, cân ướt ngoài phụ lục";
+            _point.Text = "lỗi";
+            _state.Text = ex.Message.Length > 80 ? ex.Message[..80] : ex.Message;
+            EndSession();
         }
-        _eq.Text = equiv.ToString("0") + " g";
-        RememberTrial();
-        EndSession();
-        Reload();
     }
 
     void RememberTrial()
