@@ -4,6 +4,7 @@ public sealed class ChartPane : Control
 {
     public readonly record struct Sample(DateTime T, int G);
     readonly List<Sample> _all = new();
+    readonly List<Sample> _markers = new();
     DateTime _from = DateTime.MinValue;
     public IReadOnlyList<Sample> Samples => _all;
 
@@ -11,15 +12,22 @@ public sealed class ChartPane : Control
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
         BackColor = Color.FromArgb(18, 8, 14);
-        Height = 168;
+        Height = 260;
         Dock = DockStyle.Top;
     }
 
     public void Add(DateTime t, int g)
     {
-        if (_all.Count > 0 && (t - _all[^1].T).TotalSeconds < 1.2) return;
+        if (_all.Count > 0 && (t - _all[^1].T).TotalSeconds < 0.9) return;
         _all.Add(new Sample(t, g));
-        if (_all.Count > 20000) _all.RemoveRange(0, _all.Count - 16000);
+        if (_all.Count > 30000) _all.RemoveRange(0, _all.Count - 24000);
+        Invalidate();
+    }
+
+    public void MarkCapture(DateTime t, int g)
+    {
+        _markers.Add(new Sample(t, g));
+        if (_markers.Count > 80) _markers.RemoveRange(0, _markers.Count - 60);
         Invalidate();
     }
 
@@ -34,6 +42,7 @@ public sealed class ChartPane : Control
     public void ClearDisplay()
     {
         _all.Clear();
+        _markers.Clear();
         Invalidate();
     }
 
@@ -49,9 +58,11 @@ public sealed class ChartPane : Control
         using var axis = new Pen(Color.FromArgb(90, 50, 60));
         using var zero = new Pen(Color.FromArgb(120, 90, 40));
         using var line = new Pen(Color.FromArgb(80, 200, 220), 2f);
+        using var red = new Pen(Color.FromArgb(220, 60, 60), 3f);
         using var cropPen = new Pen(Color.FromArgb(180, 140, 70), 1f) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
         using var font = new Font("Segoe UI", 8f);
         using var brush = new SolidBrush(Color.FromArgb(201, 180, 173));
+        using var redBrush = new SolidBrush(Color.FromArgb(220, 60, 60));
         g.DrawRectangle(axis, plot);
         var y0 = Y(plot, 0);
         g.DrawLine(zero, plot.Left, y0, plot.Right, y0);
@@ -78,6 +89,27 @@ public sealed class ChartPane : Control
             g.DrawLine(b.Crop ? cropPen : line, x1, y1, x2, y2);
             if (b.Crop)
                 g.DrawString("cắt", font, brush, x2 + 2, y2 - 14);
+        }
+        // Draw red markers on nearest view points
+        foreach (var m in _markers)
+        {
+            if (_from > DateTime.MinValue && m.T < _from.AddSeconds(-5)) continue;
+            var best = view[0];
+            var bestDt = double.MaxValue;
+            foreach (var v in view)
+            {
+                var dt = Math.Abs((v.T - m.T).TotalSeconds);
+                if (dt < bestDt)
+                {
+                    bestDt = dt;
+                    best = v;
+                }
+            }
+            if (bestDt > 8) continue;
+            var x = plot.Left + (float)((best.X - view[0].X) / span * plot.Width);
+            var y = Y(plot, best.G);
+            g.FillEllipse(redBrush, x - 4, y - 4, 8, 8);
+            g.DrawEllipse(red, x - 5, y - 5, 10, 10);
         }
         g.DrawString(view[0].T.ToString("HH:mm:ss"), font, brush, plot.Left, plot.Bottom + 2);
         g.DrawString(view[^1].T.ToString("HH:mm:ss"), font, brush, plot.Right - 58, plot.Bottom + 2);

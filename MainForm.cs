@@ -43,6 +43,9 @@ public sealed class MainForm : Form
     double _best = double.MaxValue;
     double? _wetG;
     readonly List<int> _wetSeen = new();
+    readonly List<(DateTime T, int G)> _recent = new();
+    const double StableSec = 2.0;
+    const int StableSpread = 15;
     DateTime _lowSince = DateTime.MinValue;
     DateTime _openAt = DateTime.MinValue;
     readonly List<DateTime> _trialStarts = new();
@@ -51,7 +54,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.3.2  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.4.0  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -60,7 +63,7 @@ public sealed class MainForm : Form
         Font = new Font("Segoe UI", 10f);
 
         TrySetIcon();
-        var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 188, Padding = new Padding(12, 8, 12, 4), WrapContents = false };
+        var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 104, Padding = new Padding(12, 8, 12, 4), WrapContents = false };
         top.Controls.Add(Card("Số g hiện tại", _live));
         top.Controls.Add(Card("Chuỗi khô", _dry));
         top.Controls.Add(Card("Cân ướt", _wet));
@@ -76,7 +79,7 @@ public sealed class MainForm : Form
         lamps.Controls.Add(_state);
         top.Controls.Add(lamps);
 
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 86, Padding = new Padding(12, 6, 12, 6) };
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 52, Padding = new Padding(12, 6, 12, 6) };
         var listen = Button("Nghe COM4");
         var stop = Button("Ngừng");
         var edit = Button("Mở sửa");
@@ -230,7 +233,7 @@ public sealed class MainForm : Form
         try { _port?.Pump(); } catch { }
         try { File.WriteAllText(Path.Combine(_store.DataDir, "thudiem.host"), DateTimeOffset.Now.ToString("o")); } catch { }
         var shown = raw.Length > 0 ? raw : OneLine(_chunk);
-        if (shown.Length > 0 && DateTime.UtcNow - _rawAt >= TimeSpan.FromMilliseconds(1500))
+        if (shown.Length > 0 && DateTime.UtcNow - _rawAt >= TimeSpan.FromMilliseconds(1000))
         {
             _rawAt = DateTime.UtcNow;
             _raw.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + shown + Environment.NewLine);
@@ -243,7 +246,7 @@ public sealed class MainForm : Form
             _state.Text = _listening && !_sawByte ? "COM4 mở, chưa có byte" : "COM4 im";
             return;
         }
-        if (_chartAt == DateTime.MinValue || DateTime.UtcNow - _chartAt >= TimeSpan.FromMilliseconds(1500))
+        if (_chartAt == DateTime.MinValue || DateTime.UtcNow - _chartAt >= TimeSpan.FromMilliseconds(1000))
         {
             _chartAt = DateTime.UtcNow;
             _chart.Add(DateTime.Now, grams);
@@ -265,10 +268,14 @@ public sealed class MainForm : Form
     void OnGrams(int grams)
     {
         _live.Text = grams.ToString("0") + " g";
+        var now = DateTime.UtcNow;
+        _recent.Add((now, grams));
+        if (_recent.Count > 40) _recent.RemoveRange(0, _recent.Count - 40);
+
         if (grams < 100)
         {
-            if (_lowSince == DateTime.MinValue) _lowSince = DateTime.UtcNow;
-            if (DateTime.UtcNow - _lowSince < TimeSpan.FromSeconds(1)) return;
+            if (_lowSince == DateTime.MinValue) _lowSince = now;
+            if (now - _lowSince < TimeSpan.FromSeconds(1)) return;
             if (_session && _dryLocked && Wet(out var wet))
                 Commit(_dryG, wet);
             else if (_session && _dryLocked)
@@ -306,24 +313,8 @@ public sealed class MainForm : Form
         if (grams >= 150 && grams <= 1200)
         {
             _wetSeen.Add(grams);
-            if (_wetSeen.Count > 40) _wetSeen.RemoveRange(0, _wetSeen.Count - 40);
-            if (Wet(out var wetNow))
-            {
-                _wetG = wetNow;
-                _wet.Text = wetNow.ToString("0") + " g";
-                var equiv = StarchTable.EquivalentWet(_dryG, wetNow);
-                _eq.Text = equiv.ToString("0") + " g";
-                if (StarchTable.TryNearest(equiv, out _, out var diem))
-                {
-                    _point.Text = diem.ToString("0.00") + " %";
-                    _state.Text = "ướt ổn " + wetNow.ToString("0") + " g → " + diem.ToString("0.00") + "%";
-                }
-                else
-                {
-                    _point.Text = "ngoài bảng";
-                    _state.Text = "ướt " + equiv.ToString("0") + " g ngoài 280–670";
-                }
-            }
+            if (_wetSeen.Count > 50) _wetSeen.RemoveRange(0, _wetSeen.Count - 50);
+            TryLockWet();
             return;
         }
         _state.Text = _wetG is double held
@@ -334,25 +325,64 @@ public sealed class MainForm : Form
     void ConsiderDry(int grams)
     {
         if (grams < 4200 || grams > 5800) return;
-        var dist = Math.Abs(grams - 5000);
-        if (_dryLocked && dist > _best) return;
-        if (_dryLocked && Math.Abs(dist - _best) < 0.1 && grams >= _dryG) return;
-        _dryG = grams;
+        if (!TryStable(4200, 5800, out var stableG, out var stableT)) return;
+        var dist = Math.Abs(stableG - 5000);
+        if (_dryLocked && dist > _best + 5) return;
+        if (_dryLocked && Math.Abs(dist - _best) < 2 && stableG >= _dryG) return;
+        _dryG = stableG;
         _best = dist;
         _dryLocked = true;
-        _dry.Text = grams.ToString("0") + " g";
+        _dry.Text = stableG.ToString("0") + " g";
         _wet.Text = "—";
         _eq.Text = "—";
         _point.Text = "—";
         _wetG = null;
         _wetSeen.Clear();
-        _state.Text = "khô " + grams.ToString("0") + " g";
+        _state.Text = "khô ổn " + stableG.ToString("0") + " g";
+        _chart.MarkCapture(DateTime.Now, (int)stableG);
+    }
+
+    void TryLockWet()
+    {
+        if (!TryStable(150, 1200, out var stableG, out var stableT)) return;
+        _wetG = stableG;
+        _wet.Text = stableG.ToString("0") + " g";
+        var equiv = StarchTable.EquivalentWet(_dryG, stableG);
+        _eq.Text = equiv.ToString("0") + " g";
+        if (StarchTable.TryNearest(equiv, out _, out var diem))
+        {
+            _point.Text = diem.ToString("0.00") + " %";
+            _state.Text = "ướt ổn " + stableG.ToString("0") + " g → " + diem.ToString("0.00") + "%";
+        }
+        else
+        {
+            _point.Text = "ngoài bảng";
+            _state.Text = "ướt " + equiv.ToString("0") + " g ngoài 280–670";
+        }
+        _chart.MarkCapture(DateTime.Now, (int)stableG);
+    }
+
+    bool TryStable(int minG, int maxG, out double median, out DateTime at)
+    {
+        median = 0;
+        at = DateTime.MinValue;
+        if (_recent.Count < 3) return false;
+        var cutoff = DateTime.UtcNow.AddSeconds(-StableSec);
+        var window = _recent.Where(s => s.T >= cutoff && s.G >= minG && s.G <= maxG).ToList();
+        if (window.Count < 2) return false;
+        var span = (window[^1].T - window[0].T).TotalSeconds;
+        if (span < StableSec * 0.8) return false;
+        var vals = window.Select(s => s.G).OrderBy(x => x).ToList();
+        if (vals[^1] - vals[0] > StableSpread) return false;
+        median = vals[vals.Count / 2];
+        at = window[^1].T;
+        return true;
     }
 
     bool Wet(out double wet)
     {
         wet = 0;
-        if (_wetG is double held && _wetSeen.Count == 0)
+        if (_wetG is double held)
         {
             wet = held;
             return true;
@@ -406,9 +436,9 @@ public sealed class MainForm : Form
     {
         if (_openAt == DateTime.MinValue) _openAt = DateTime.Now;
         _trialStarts.Add(_openAt);
-        if (_trialStarts.Count > 30) _trialStarts.RemoveRange(0, _trialStarts.Count - 30);
-        if (_trialStarts.Count >= 10)
-            _chart.ShowFrom(_trialStarts[^10]);
+        if (_trialStarts.Count > 45) _trialStarts.RemoveRange(0, _trialStarts.Count - 30);
+        if (_trialStarts.Count >= 15)
+            _chart.ShowFrom(_trialStarts[^15]);
     }
 
     void EndSession()
@@ -417,6 +447,7 @@ public sealed class MainForm : Form
         _dryLocked = false;
         _wetG = null;
         _wetSeen.Clear();
+        _recent.Clear();
         _best = double.MaxValue;
         _prev = 0;
         _lowSince = DateTime.MinValue;
