@@ -18,7 +18,7 @@ public sealed class ChartPane : Control
 
     public void Add(DateTime t, int g)
     {
-        if (_all.Count > 0 && (t - _all[^1].T).TotalSeconds < 0.9) return;
+        if (_all.Count > 0 && (t - _all[^1].T).TotalSeconds < 0.4) return;
         _all.Add(new Sample(t, g));
         if (_all.Count > 30000) _all.RemoveRange(0, _all.Count - 24000);
         Invalidate();

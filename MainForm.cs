@@ -44,8 +44,9 @@ public sealed class MainForm : Form
     double? _wetG;
     readonly List<int> _wetSeen = new();
     readonly List<(DateTime T, int G)> _recent = new();
-    const double StableSec = 2.0;
+    const double StableSec = 1.5;
     const int StableSpread = 15;
+    readonly List<(DateTime T, int G)> _dryAccum = new();
     DateTime _lowSince = DateTime.MinValue;
     DateTime _openAt = DateTime.MinValue;
     readonly List<DateTime> _trialStarts = new();
@@ -54,7 +55,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.4.0  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.5.0  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -233,7 +234,7 @@ public sealed class MainForm : Form
         try { _port?.Pump(); } catch { }
         try { File.WriteAllText(Path.Combine(_store.DataDir, "thudiem.host"), DateTimeOffset.Now.ToString("o")); } catch { }
         var shown = raw.Length > 0 ? raw : OneLine(_chunk);
-        if (shown.Length > 0 && DateTime.UtcNow - _rawAt >= TimeSpan.FromMilliseconds(1000))
+        if (shown.Length > 0 && DateTime.UtcNow - _rawAt >= TimeSpan.FromMilliseconds(500))
         {
             _rawAt = DateTime.UtcNow;
             _raw.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + shown + Environment.NewLine);
@@ -246,7 +247,7 @@ public sealed class MainForm : Form
             _state.Text = _listening && !_sawByte ? "COM4 mở, chưa có byte" : "COM4 im";
             return;
         }
-        if (_chartAt == DateTime.MinValue || DateTime.UtcNow - _chartAt >= TimeSpan.FromMilliseconds(1000))
+        if (_chartAt == DateTime.MinValue || DateTime.UtcNow - _chartAt >= TimeSpan.FromMilliseconds(500))
         {
             _chartAt = DateTime.UtcNow;
             _chart.Add(DateTime.Now, grams);
@@ -270,7 +271,7 @@ public sealed class MainForm : Form
         _live.Text = grams.ToString("0") + " g";
         var now = DateTime.UtcNow;
         _recent.Add((now, grams));
-        if (_recent.Count > 40) _recent.RemoveRange(0, _recent.Count - 40);
+        if (_recent.Count > 60) _recent.RemoveRange(0, _recent.Count - 60);
 
         if (grams < 100)
         {
@@ -296,18 +297,26 @@ public sealed class MainForm : Form
                 _session = true;
                 _openAt = DateTime.Now;
                 _state.Text = "mở phiên";
-                ConsiderDry(grams);
             }
             return;
         }
-        if (grams >= 4200 && grams <= 5800)
+
+        // Dry accumulation only in 4900-5100
+        if (grams >= 4900 && grams <= 5100)
         {
-            ConsiderDry(grams);
+            _dryAccum.Add((now, grams));
+            if (_dryAccum.Count > 80) _dryAccum.RemoveRange(0, _dryAccum.Count - 80);
+            _state.Text = "đang tích lũy khô...";
             return;
         }
+        else if (_dryAccum.Count > 0)
+        {
+            FinalizeDry();
+        }
+
         if (!_dryLocked)
         {
-            _state.Text = "phiên mở, chưa thấy khô quanh 5000 g";
+            _state.Text = "phiên mở, chưa thấy khô 4900–5100 g";
             return;
         }
         if (grams >= 150 && grams <= 1200)
@@ -322,24 +331,44 @@ public sealed class MainForm : Form
             : "đã có khô, chờ cân ướt";
     }
 
-    void ConsiderDry(int grams)
+    void FinalizeDry()
     {
-        if (grams < 4200 || grams > 5800) return;
-        if (!TryStable(4200, 5800, out var stableG, out var stableT)) return;
-        var dist = Math.Abs(stableG - 5000);
-        if (_dryLocked && dist > _best + 5) return;
-        if (_dryLocked && Math.Abs(dist - _best) < 2 && stableG >= _dryG) return;
-        _dryG = stableG;
+        if (_dryAccum.Count < 3)
+        {
+            _dryAccum.Clear();
+            return;
+        }
+        var span = (_dryAccum[^1].T - _dryAccum[0].T).TotalSeconds;
+        if (span < StableSec * 0.85)
+        {
+            _dryAccum.Clear();
+            return;
+        }
+        var vals = _dryAccum.Select(s => s.G).OrderBy(x => x).ToList();
+        if (vals[^1] - vals[0] > StableSpread)
+        {
+            _dryAccum.Clear();
+            return;
+        }
+        var median = vals[vals.Count / 2];
+        var dist = Math.Abs(median - 5000);
+        if (_dryLocked && dist > _best + 3) 
+        {
+            _dryAccum.Clear();
+            return;
+        }
+        _dryG = median;
         _best = dist;
         _dryLocked = true;
-        _dry.Text = stableG.ToString("0") + " g";
+        _dry.Text = median.ToString("0") + " g";
         _wet.Text = "—";
         _eq.Text = "—";
         _point.Text = "—";
         _wetG = null;
         _wetSeen.Clear();
-        _state.Text = "khô ổn " + stableG.ToString("0") + " g";
-        _chart.MarkCapture(DateTime.Now, (int)stableG);
+        _state.Text = "khô ổn " + median.ToString("0") + " g";
+        _chart.MarkCapture(DateTime.Now, (int)median);
+        _dryAccum.Clear();
     }
 
     void TryLockWet()
@@ -448,6 +477,7 @@ public sealed class MainForm : Form
         _wetG = null;
         _wetSeen.Clear();
         _recent.Clear();
+        _dryAccum.Clear();
         _best = double.MaxValue;
         _prev = 0;
         _lowSince = DateTime.MinValue;
