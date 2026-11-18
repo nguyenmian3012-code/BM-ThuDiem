@@ -5,6 +5,7 @@ public sealed class ChartPane : Control
     public readonly record struct Sample(DateTime T, int G);
     readonly List<Sample> _all = new();
     readonly List<Sample> _markers = new();
+    readonly List<(DateTime T, int Stt)> _stts = new();
     DateTime _from = DateTime.MinValue;
     public IReadOnlyList<Sample> Samples => _all;
 
@@ -31,6 +32,13 @@ public sealed class ChartPane : Control
         Invalidate();
     }
 
+    public void AddStt(DateTime t, int stt)
+    {
+        _stts.Add((t, stt));
+        if (_stts.Count > 50) _stts.RemoveAt(0);
+        Invalidate();
+    }
+
     public void ShowFrom(DateTime from)
     {
         _from = from;
@@ -43,6 +51,7 @@ public sealed class ChartPane : Control
     {
         _all.Clear();
         _markers.Clear();
+        _stts.Clear();
         Invalidate();
     }
 
@@ -111,8 +120,25 @@ public sealed class ChartPane : Control
             g.FillEllipse(redBrush, x - 4, y - 4, 8, 8);
             g.DrawEllipse(red, x - 5, y - 5, 10, 10);
         }
-        g.DrawString(view[0].T.ToString("HH:mm:ss"), font, brush, plot.Left, plot.Bottom + 2);
-        g.DrawString(view[^1].T.ToString("HH:mm:ss"), font, brush, plot.Right - 58, plot.Bottom + 2);
+        // White STT numbers under peaks
+        using var white = new SolidBrush(Color.White);
+        using var sttFont = new Font("Segoe UI", 9f, FontStyle.Bold);
+        foreach (var (t, stt) in _stts)
+        {
+            if (_from > DateTime.MinValue && t < _from.AddSeconds(-5)) continue;
+            var best = view[0];
+            var bestDt = double.MaxValue;
+            foreach (var v in view)
+            {
+                var dt = Math.Abs((v.T - t).TotalSeconds);
+                if (dt < bestDt) { bestDt = dt; best = v; }
+            }
+            if (bestDt > 12) continue;
+            var x = plot.Left + (float)((best.X - view[0].X) / span * plot.Width);
+            g.DrawString(stt.ToString(), sttFont, white, x - 8, plot.Bottom + 2);
+        }
+        g.DrawString(view[0].T.ToString("HH:mm:ss"), font, brush, plot.Left, plot.Bottom + 18);
+        g.DrawString(view[^1].T.ToString("HH:mm:ss"), font, brush, plot.Right - 58, plot.Bottom + 18);
     }
 
     static float Y(Rectangle plot, int grams)

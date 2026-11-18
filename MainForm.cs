@@ -47,6 +47,8 @@ public sealed class MainForm : Form
     const double StableSec = 1.5;
     const int StableSpread = 15;
     readonly List<(DateTime T, int G)> _dryAccum = new();
+    int _nextStt = 1;
+    readonly List<(DateTime T, int Stt)> _chartStts = new();
     DateTime _lowSince = DateTime.MinValue;
     DateTime _openAt = DateTime.MinValue;
     readonly List<DateTime> _trialStarts = new();
@@ -55,7 +57,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.5.0  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.5.1  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -273,10 +275,21 @@ public sealed class MainForm : Form
         _recent.Add((now, grams));
         if (_recent.Count > 60) _recent.RemoveRange(0, _recent.Count - 60);
 
-        if (grams < 100)
+        // Aggressive close: already have dry+wet and weight dropped low
+        if (_session && _dryLocked && _wetG != null && grams < 400)
         {
             if (_lowSince == DateTime.MinValue) _lowSince = now;
-            if (now - _lowSince < TimeSpan.FromSeconds(1)) return;
+            if (now - _lowSince >= TimeSpan.FromSeconds(0.6))
+            {
+                if (Wet(out var wet)) Commit(_dryG, wet);
+                else EndSession();
+                return;
+            }
+        }
+        else if (grams < 100)
+        {
+            if (_lowSince == DateTime.MinValue) _lowSince = now;
+            if (now - _lowSince < TimeSpan.FromSeconds(0.8)) return;
             if (_session && _dryLocked && Wet(out var wet))
                 Commit(_dryG, wet);
             else if (_session && _dryLocked)
@@ -287,16 +300,33 @@ public sealed class MainForm : Form
             else EndSession();
             return;
         }
-        _lowSince = DateTime.MinValue;
-        var rising = grams > _prev;
+        else
+            _lowSince = DateTime.MinValue;
+
+        var rising = grams > _prev + 30;
         _prev = grams;
+
+        // Force close previous session if a new rise starts after we already locked values
+        if (_session && _dryLocked && rising && grams > 800)
+        {
+            if (_wetG != null && Wet(out var wet))
+                Commit(_dryG, wet);
+            else
+                EndSession();
+            // fall through to open new
+        }
+
         if (!_session)
         {
             if (grams > 1000 && rising)
             {
                 _session = true;
                 _openAt = DateTime.Now;
-                _state.Text = "mở phiên";
+                var stt = _nextStt++;
+                _chartStts.Add((DateTime.Now, stt));
+                if (_chartStts.Count > 40) _chartStts.RemoveAt(0);
+                _chart.AddStt(DateTime.Now, stt);
+                _state.Text = "mở phiên #" + stt;
             }
             return;
         }
