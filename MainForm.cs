@@ -63,7 +63,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.6.0  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.6.1  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -97,6 +97,7 @@ public sealed class MainForm : Form
         var clear = Button("Clear");
         var drop = Button("Xóa phiếu");
         var hist = Button("Lịch sử COM");
+        var clearBad = Button("Xóa lô sai");
         var hideLow = new CheckBox { Text = "Lọc dưới 15", AutoSize = true, Checked = true, ForeColor = Color.FromArgb(246, 238, 230), Margin = new Padding(12, 8, 8, 0) };
         listen.Click += (_, _) => StartListen();
         stop.Click += (_, _) => StopListen();
@@ -106,9 +107,10 @@ public sealed class MainForm : Form
         clear.Click += (_, _) => _chart.ClearDisplay();
         drop.Click += (_, _) => DeleteChosen();
         hist.Click += (_, _) => ShowSilence();
+        clearBad.Click += (_, _) => ClearBadBatch();
         hideLow.CheckedChanged += (_, _) => Reload();
         _hideLow = hideLow;
-        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, drop, hist, hideLow, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
+        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, drop, hist, clearBad, hideLow, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
         _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
         _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
@@ -396,12 +398,19 @@ public sealed class MainForm : Form
         }
     }
 
+    bool _committing;
     void TryCommitAndEnd()
     {
-        if (_dryLocked && Wet(out var wet))
-            Commit(_dryG, wet);
-        else
-            EndSession();
+        if (_committing || !_session) return;
+        _committing = true;
+        try
+        {
+            if (_dryLocked && Wet(out var wet))
+                Commit(_dryG, wet);
+            else
+                EndSession();
+        }
+        finally { _committing = false; }
     }
 
     void TryLockWet()
@@ -487,11 +496,9 @@ public sealed class MainForm : Form
                 _state.Text = "không chốt, cân ướt ngoài phụ lục";
             }
             _eq.Text = equiv.ToString("0") + " g";
-            _scoreSaved = true;
-            _scoreSavedAt = DateTime.UtcNow;
             SaveSessionSamples(id);
             RememberTrial();
-            // Do not EndSession immediately; wait for return-to-zero or 15s stable
+            EndSession();
             Reload();
         }
         catch (Exception ex)
@@ -593,6 +600,18 @@ public sealed class MainForm : Form
             }
         }
         if (_silence.Count > 200) _silence.RemoveRange(0, _silence.Count - 150);
+    }
+
+    void ClearBadBatch()
+    {
+        if (!AskPin()) return;
+        if (MessageBox.Show(this,
+            "Xóa tất cả phiếu trùng vừa bị tạo (cùng điểm, cùng người, trong vài phút gần nhất)?",
+            "Xóa lô sai", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+            return;
+        var n = _store.DeleteRecentDuplicates(TimeSpan.FromMinutes(10));
+        Reload();
+        _state.Text = "đã xóa " + n + " phiếu trùng";
     }
 
     void ShowSilence()

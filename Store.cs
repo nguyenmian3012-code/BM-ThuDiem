@@ -314,6 +314,33 @@ public sealed class TrialStore
         return day;
     }
 
+    public int DeleteRecentDuplicates(TimeSpan window)
+    {
+        var cutoff = DateTimeOffset.Now - window;
+        using var cmd = _cx.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM trials
+            WHERE id IN (
+              SELECT id FROM trials
+              WHERE ts >= $cut
+              GROUP BY diem, operator, substr(ts,1,16)
+              HAVING COUNT(*) > 1
+            );
+            """;
+        // simpler: delete all but the oldest in each cluster of same diem+operator within the window
+        cmd.CommandText = """
+            DELETE FROM trials
+            WHERE id NOT IN (
+              SELECT MIN(id) FROM trials
+              WHERE ts >= $cut
+              GROUP BY IFNULL(diem,-1), IFNULL(operator,''), substr(ts,1,19)
+            )
+            AND ts >= $cut;
+            """;
+        cmd.Parameters.AddWithValue("$cut", cutoff.ToString("o"));
+        return cmd.ExecuteNonQuery();
+    }
+
     public void Delete(IReadOnlyCollection<long> ids)
     {
         foreach (var id in ids)
