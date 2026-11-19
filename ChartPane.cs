@@ -39,6 +39,14 @@ public sealed class ChartPane : Control
         Invalidate();
     }
 
+    public void SetLastStt(int stt)
+    {
+        if (_stts.Count == 0) return;
+        var last = _stts[^1];
+        _stts[^1] = (last.T, stt);
+        Invalidate();
+    }
+
     public void ShowFrom(DateTime from)
     {
         _from = from;

@@ -29,6 +29,8 @@ public sealed class MainForm : Form
     int _grams;
     bool _kingbird;
     DateTime _sampleAt = DateTime.MinValue;
+    DateTime _lastByteAt = DateTime.MinValue;
+    readonly List<(DateTime From, DateTime To)> _silence = new();
     DateTime _rawAt = DateTime.MinValue;
     readonly ChartPane _chart = new();
     DateTime _chartAt = DateTime.MinValue;
@@ -57,7 +59,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.5.1  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.5.2  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -90,6 +92,7 @@ public sealed class MainForm : Form
         var rules = Button("Quy tắc");
         var clear = Button("Clear");
         var drop = Button("Xóa phiếu");
+        var hist = Button("Lịch sử COM");
         var hideLow = new CheckBox { Text = "Lọc dưới 15", AutoSize = true, Checked = true, ForeColor = Color.FromArgb(246, 238, 230), Margin = new Padding(12, 8, 8, 0) };
         listen.Click += (_, _) => StartListen();
         stop.Click += (_, _) => StopListen();
@@ -98,9 +101,10 @@ public sealed class MainForm : Form
         rules.Click += (_, _) => ShowRules();
         clear.Click += (_, _) => _chart.ClearDisplay();
         drop.Click += (_, _) => DeleteChosen();
+        hist.Click += (_, _) => ShowSilence();
         hideLow.CheckedChanged += (_, _) => Reload();
         _hideLow = hideLow;
-        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, drop, hideLow, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
+        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, drop, hist, hideLow, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
         _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
         _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
@@ -233,6 +237,7 @@ public sealed class MainForm : Form
         var auto = AutoCanAlive();
         SetLamp(_auto, auto, auto ? "AutoCan đang chạy" : "AutoCan tắt, phiếu chờ gửi");
         PaintCom(at);
+        TrackSilence();
         try { _port?.Pump(); } catch { }
         try { File.WriteAllText(Path.Combine(_store.DataDir, "thudiem.host"), DateTimeOffset.Now.ToString("o")); } catch { }
         var shown = raw.Length > 0 ? raw : OneLine(_chunk);
@@ -369,7 +374,7 @@ public sealed class MainForm : Form
             return;
         }
         var span = (_dryAccum[^1].T - _dryAccum[0].T).TotalSeconds;
-        if (span < StableSec * 0.85)
+        if (span < 1.2)
         {
             _dryAccum.Clear();
             return;
@@ -462,6 +467,11 @@ public sealed class MainForm : Form
             var who = _store.OperatorNow();
             var note = !ok ? "ngoài bảng" : low ? "dưới 15" : "";
             var id = _store.Add(ok ? diem : null, who, dry, wet, equiv, listed, "", note);
+            if (_chartStts.Count > 0)
+            {
+                var last = _chartStts[^1];
+                _chart.SetLastStt((int)id);
+            }
             if (ok && !low)
             {
                 _store.HandOff(id, diem, who, dry, wet, equiv, listed);
@@ -512,6 +522,43 @@ public sealed class MainForm : Form
         _prev = 0;
         _lowSince = DateTime.MinValue;
         _openAt = DateTime.MinValue;
+    }
+
+    void TrackSilence()
+    {
+        var now = DateTime.UtcNow;
+        var silent = !_sawByte || _sampleAt == DateTime.MinValue || now - _sampleAt > TimeSpan.FromSeconds(8);
+        if (silent)
+        {
+            if (_lastByteAt != DateTime.MinValue && (_silence.Count == 0 || _silence[^1].To != DateTime.MinValue))
+                _silence.Add((_lastByteAt == DateTime.MinValue ? now : _lastByteAt, DateTime.MinValue));
+        }
+        else
+        {
+            _lastByteAt = now;
+            if (_silence.Count > 0 && _silence[^1].To == DateTime.MinValue)
+            {
+                var s = _silence[^1];
+                _silence[^1] = (s.From, now);
+            }
+        }
+        if (_silence.Count > 200) _silence.RemoveRange(0, _silence.Count - 150);
+    }
+
+    void ShowSilence()
+    {
+        var lines = new List<string>();
+        if (_silence.Count == 0) lines.Add("Chưa ghi nhận khoảng im COM4.");
+        else
+        {
+            foreach (var (from, to) in _silence.TakeLast(40))
+            {
+                var end = to == DateTime.MinValue ? DateTime.Now : to;
+                var hours = (end - from).TotalHours;
+                lines.Add($"{from.ToLocalTime():dd/MM HH:mm} → {(to == DateTime.MinValue ? "đang im" : to.ToLocalTime().ToString("HH:mm"))}  ({hours:0.0} giờ)");
+            }
+        }
+        MessageBox.Show(this, string.Join(Environment.NewLine, lines), "Lịch sử im COM4", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     void DeleteChosen()
