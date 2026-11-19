@@ -131,7 +131,7 @@ public sealed class ChartPane : Control
         // White STT numbers under peaks
         using var white = new SolidBrush(Color.White);
         using var sttFont = new Font("Segoe UI", 9f, FontStyle.Bold);
-        foreach (var (t, stt) in _stts)
+        foreach (var (t, _) in _stts)
         {
             if (_from > DateTime.MinValue && t < _from.AddSeconds(-5)) continue;
             var best = view[0];
@@ -141,9 +141,9 @@ public sealed class ChartPane : Control
                 var dt = Math.Abs((v.T - t).TotalSeconds);
                 if (dt < bestDt) { bestDt = dt; best = v; }
             }
-            if (bestDt > 12) continue;
+            if (bestDt > 15) continue;
             var x = plot.Left + (float)((best.X - view[0].X) / span * plot.Width);
-            g.DrawString(stt.ToString(), sttFont, white, x - 8, plot.Bottom + 2);
+            g.DrawString(t.ToString("HH:mm"), sttFont, white, x - 16, plot.Bottom + 2);
         }
         g.DrawString(view[0].T.ToString("HH:mm:ss"), font, brush, plot.Left, plot.Bottom + 18);
         g.DrawString(view[^1].T.ToString("HH:mm:ss"), font, brush, plot.Right - 58, plot.Bottom + 18);

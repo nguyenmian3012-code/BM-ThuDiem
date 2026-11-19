@@ -314,6 +314,22 @@ public sealed class TrialStore
         return day;
     }
 
+    public int DeleteSince(TimeSpan window)
+    {
+        var cutoff = DateTimeOffset.Now - window;
+        using var cmd = _cx.CreateCommand();
+        cmd.CommandText = "DELETE FROM trials WHERE ts >= $cut";
+        cmd.Parameters.AddWithValue("$cut", cutoff.ToString("o"));
+        return cmd.ExecuteNonQuery();
+    }
+
+    public int DeleteAll()
+    {
+        using var cmd = _cx.CreateCommand();
+        cmd.CommandText = "DELETE FROM trials";
+        return cmd.ExecuteNonQuery();
+    }
+
     public int DeleteRecentDuplicates(TimeSpan window)
     {
         var cutoff = DateTimeOffset.Now - window;

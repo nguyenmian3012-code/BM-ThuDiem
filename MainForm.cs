@@ -63,7 +63,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.6.1  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.6.2  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -89,15 +89,16 @@ public sealed class MainForm : Form
         top.Controls.Add(lamps);
 
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 52, Padding = new Padding(12, 6, 12, 6) };
-        var listen = Button("Nghe COM4");
+        var listen = Button("Nghe COM");
         var stop = Button("Ngừng");
-        var edit = Button("Mở sửa");
+        
         var shifts = Button("Ca cân");
         var rules = Button("Quy tắc");
-        var clear = Button("Clear");
+        var clear = Button("Clear Bảng");
         var drop = Button("Xóa phiếu");
         var hist = Button("Lịch sử COM");
         var clearBad = Button("Xóa lô sai");
+        var allClean = Button("All Clean");
         var hideLow = new CheckBox { Text = "Lọc dưới 15", AutoSize = true, Checked = true, ForeColor = Color.FromArgb(246, 238, 230), Margin = new Padding(12, 8, 8, 0) };
         listen.Click += (_, _) => StartListen();
         stop.Click += (_, _) => StopListen();
@@ -108,9 +109,10 @@ public sealed class MainForm : Form
         drop.Click += (_, _) => DeleteChosen();
         hist.Click += (_, _) => ShowSilence();
         clearBad.Click += (_, _) => ClearBadBatch();
+        allClean.Click += (_, _) => AllClean();
         hideLow.CheckedChanged += (_, _) => Reload();
         _hideLow = hideLow;
-        bar.Controls.AddRange(new Control[] { listen, stop, edit, shifts, rules, clear, drop, hist, clearBad, hideLow, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
+        bar.Controls.AddRange(new Control[] { listen, stop, shifts, rules, clear, drop, hist, clearBad, allClean, hideLow, Mini("TB a Phước", _avgA), Mini("TB a Đấu", _avgB) });
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 };
         _grid.BackgroundColor = Color.FromArgb(42, 16, 22);
         _grid.DefaultCellStyle.BackColor = Color.FromArgb(42, 16, 22);
@@ -154,7 +156,7 @@ public sealed class MainForm : Form
         var rawHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
         rawHost.Controls.Add(_raw);
         split.Panel2.Controls.Add(rawHost);
-        split.Panel2.Controls.Add(new Label { Text = "RAW COM4  ·  1,5 giây", Dock = DockStyle.Top, Height = 24, ForeColor = Color.FromArgb(232, 197, 71) });
+        split.Panel2.Controls.Add(new Label { Text = "RAW COM  ·  0,5 giây", Dock = DockStyle.Top, Height = 24, ForeColor = Color.FromArgb(232, 197, 71) });
         Controls.Add(split);
         Controls.Add(_chart);
         Controls.Add(bar);
@@ -605,13 +607,43 @@ public sealed class MainForm : Form
     void ClearBadBatch()
     {
         if (!AskPin()) return;
-        if (MessageBox.Show(this,
-            "Xóa tất cả phiếu trùng vừa bị tạo (cùng điểm, cùng người, trong vài phút gần nhất)?",
-            "Xóa lô sai", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
-            return;
-        var n = _store.DeleteRecentDuplicates(TimeSpan.FromMinutes(10));
+        using var dlg = new Form
+        {
+            Text = "Xóa phiếu theo thời gian",
+            Width = 320, Height = 220,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false
+        };
+        var h24 = new Button { Text = "Xóa 24 giờ", Left = 20, Top = 20, Width = 120 };
+        var h6 = new Button { Text = "Xóa 6 giờ", Left = 160, Top = 20, Width = 120 };
+        var h3 = new Button { Text = "Xóa 3 giờ", Left = 20, Top = 60, Width = 120 };
+        var h1 = new Button { Text = "Xóa 1 giờ", Left = 160, Top = 60, Width = 120 };
+        var ok = new Button { Text = "Chấp nhận", Left = 20, Top = 120, Width = 120, DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Hủy", Left = 160, Top = 120, Width = 120, DialogResult = DialogResult.Cancel };
+        TimeSpan? chosen = null;
+        h24.Click += (_, _) => { chosen = TimeSpan.FromHours(24); dlg.DialogResult = DialogResult.OK; };
+        h6.Click += (_, _) => { chosen = TimeSpan.FromHours(6); dlg.DialogResult = DialogResult.OK; };
+        h3.Click += (_, _) => { chosen = TimeSpan.FromHours(3); dlg.DialogResult = DialogResult.OK; };
+        h1.Click += (_, _) => { chosen = TimeSpan.FromHours(1); dlg.DialogResult = DialogResult.OK; };
+        dlg.Controls.AddRange(new Control[] { h24, h6, h3, h1, ok, cancel });
+        dlg.AcceptButton = ok;
+        dlg.CancelButton = cancel;
+        if (dlg.ShowDialog(this) != DialogResult.OK || chosen == null) return;
+        var n = _store.DeleteSince(chosen.Value);
         Reload();
-        _state.Text = "đã xóa " + n + " phiếu trùng";
+        _state.Text = "đã xóa " + n + " phiếu trong " + chosen.Value.TotalHours + " giờ";
+    }
+
+    void AllClean()
+    {
+        if (!AskPin()) return;
+        if (MessageBox.Show(this, "Xóa SẠCH toàn bộ lịch sử phiếu? Không hoàn tác được.",
+            "All Clean", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+            return;
+        var n = _store.DeleteAll();
+        Reload();
+        _state.Text = "đã xóa sạch " + n + " phiếu";
     }
 
     void ShowSilence()
