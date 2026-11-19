@@ -102,7 +102,6 @@ public sealed class MainForm : Form
         var hideLow = new CheckBox { Text = "Lọc dưới 15", AutoSize = true, Checked = true, ForeColor = Color.FromArgb(246, 238, 230), Margin = new Padding(12, 8, 8, 0) };
         listen.Click += (_, _) => StartListen();
         stop.Click += (_, _) => StopListen();
-        edit.Click += (_, _) => Unlock();
         shifts.Click += (_, _) => EditShifts();
         rules.Click += (_, _) => ShowRules();
         clear.Click += (_, _) => _chart.ClearDisplay();
