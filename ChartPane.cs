@@ -13,7 +13,7 @@ public sealed class ChartPane : Control
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
         BackColor = Color.FromArgb(18, 8, 14);
-        Height = 260;
+        Height = 280;
         Dock = DockStyle.Top;
     }
 
@@ -70,7 +70,7 @@ public sealed class ChartPane : Control
         var padL = 48;
         var padR = 12;
         var padT = 16;
-        var padB = 22;
+        var padB = 36;
         var plot = new Rectangle(padL, padT, Math.Max(10, Width - padL - padR), Math.Max(10, Height - padT - padB));
         using var axis = new Pen(Color.FromArgb(90, 50, 60));
         using var zero = new Pen(Color.FromArgb(120, 90, 40));

@@ -49,6 +49,10 @@ public sealed class MainForm : Form
     const double StableSec = 1.5;
     const int StableSpread = 15;
     readonly List<(DateTime T, int G)> _dryAccum = new();
+    readonly List<(DateTime T, int G)> _sessionSamples = new();
+    DateTime _scoreSavedAt = DateTime.MinValue;
+    int _baseline = 0;
+    bool _scoreSaved;
     int _nextStt = 1;
     readonly List<(DateTime T, int Stt)> _chartStts = new();
     DateTime _lowSince = DateTime.MinValue;
@@ -59,7 +63,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _store.Init();
-        Text = "BM-ThuDiem 1.5.2  ·  COM4  ·  QĐ 228/1999";
+        Text = "BM-ThuDiem 1.6.0  ·  COM4  ·  QĐ 228/1999";
         Width = 1180;
         Height = 880;
         StartPosition = FormStartPosition.CenterScreen;
@@ -278,48 +282,46 @@ public sealed class MainForm : Form
         _live.Text = grams.ToString("0") + " g";
         var now = DateTime.UtcNow;
         _recent.Add((now, grams));
-        if (_recent.Count > 60) _recent.RemoveRange(0, _recent.Count - 60);
-
-        // Aggressive close: already have dry+wet and weight dropped low
-        if (_session && _dryLocked && _wetG != null && grams < 400)
+        if (_recent.Count > 80) _recent.RemoveRange(0, _recent.Count - 80);
+        if (_session)
         {
-            if (_lowSince == DateTime.MinValue) _lowSince = now;
-            if (now - _lowSince >= TimeSpan.FromSeconds(0.6))
+            _sessionSamples.Add((DateTime.Now, grams));
+            if (_sessionSamples.Count > 400) _sessionSamples.RemoveAt(0);
+        }
+
+        // Close conditions (simple, non-overlapping)
+        if (_session)
+        {
+            // 1. Return to baseline / near zero
+            if (grams < 150)
             {
-                if (Wet(out var wet)) Commit(_dryG, wet);
-                else EndSession();
-                return;
+                if (_lowSince == DateTime.MinValue) _lowSince = now;
+                if (now - _lowSince >= TimeSpan.FromSeconds(0.7))
+                {
+                    TryCommitAndEnd();
+                    return;
+                }
+            }
+            else _lowSince = DateTime.MinValue;
+
+            // 2. After score saved, 15s of tiny variation
+            if (_scoreSaved && _scoreSavedAt != DateTime.MinValue)
+            {
+                var since = now - _scoreSavedAt;
+                if (since >= TimeSpan.FromSeconds(15))
+                {
+                    var window = _recent.Where(s => s.T >= now.AddSeconds(-15)).Select(s => s.G).ToList();
+                    if (window.Count >= 3 && window.Max() - window.Min() <= 5)
+                    {
+                        TryCommitAndEnd();
+                        return;
+                    }
+                }
             }
         }
-        else if (grams < 100)
-        {
-            if (_lowSince == DateTime.MinValue) _lowSince = now;
-            if (now - _lowSince < TimeSpan.FromSeconds(0.8)) return;
-            if (_session && _dryLocked && Wet(out var wet))
-                Commit(_dryG, wet);
-            else if (_session && _dryLocked)
-            {
-                _state.Text = "không ra phiếu, chưa thấy cân ướt";
-                EndSession();
-            }
-            else EndSession();
-            return;
-        }
-        else
-            _lowSince = DateTime.MinValue;
 
-        var rising = grams > _prev + 30;
+        var rising = grams > _prev + 40;
         _prev = grams;
-
-        // Force close previous session if a new rise starts after we already locked values
-        if (_session && _dryLocked && rising && grams > 800)
-        {
-            if (_wetG != null && Wet(out var wet))
-                Commit(_dryG, wet);
-            else
-                EndSession();
-            // fall through to open new
-        }
 
         if (!_session)
         {
@@ -327,6 +329,11 @@ public sealed class MainForm : Form
             {
                 _session = true;
                 _openAt = DateTime.Now;
+                _baseline = grams < 300 ? grams : 0;
+                _scoreSaved = false;
+                _scoreSavedAt = DateTime.MinValue;
+                _sessionSamples.Clear();
+                _sessionSamples.Add((DateTime.Now, grams));
                 var stt = _nextStt++;
                 _chartStts.Add((DateTime.Now, stt));
                 if (_chartStts.Count > 40) _chartStts.RemoveAt(0);
@@ -336,74 +343,65 @@ public sealed class MainForm : Form
             return;
         }
 
-        // Dry accumulation only in 4900-5100
-        if (grams >= 4900 && grams <= 5100)
+        // Always try to lock dry if we see samples in 4800-5200
+        if (grams >= 4800 && grams <= 5200)
         {
             _dryAccum.Add((now, grams));
-            if (_dryAccum.Count > 80) _dryAccum.RemoveRange(0, _dryAccum.Count - 80);
-            _state.Text = "đang tích lũy khô...";
-            return;
-        }
-        else if (_dryAccum.Count > 0)
-        {
-            FinalizeDry();
+            if (_dryAccum.Count > 100) _dryAccum.RemoveRange(0, _dryAccum.Count - 100);
+            ForceLockDry();
         }
 
         if (!_dryLocked)
         {
-            _state.Text = "phiên mở, chưa thấy khô 4900–5100 g";
+            _state.Text = "phiên mở, đang chờ khô 4800–5200 g";
             return;
         }
+
         if (grams >= 150 && grams <= 1200)
         {
             _wetSeen.Add(grams);
             if (_wetSeen.Count > 50) _wetSeen.RemoveRange(0, _wetSeen.Count - 50);
             TryLockWet();
-            return;
         }
-        _state.Text = _wetG is double held
-            ? "ướt " + held.ToString("0") + " g, chờ cân về 0"
-            : "đã có khô, chờ cân ướt";
+        else
+        {
+            _state.Text = _wetG is double held
+                ? "ướt " + held.ToString("0") + " g, chờ về 0 hoặc ổn định 15s"
+                : "đã có khô, chờ cân ướt";
+        }
     }
 
-    void FinalizeDry()
+    void ForceLockDry()
     {
-        if (_dryAccum.Count < 3)
-        {
-            _dryAccum.Clear();
-            return;
-        }
-        var span = (_dryAccum[^1].T - _dryAccum[0].T).TotalSeconds;
-        if (span < 1.2)
-        {
-            _dryAccum.Clear();
-            return;
-        }
+        if (_dryAccum.Count < 2) return;
         var vals = _dryAccum.Select(s => s.G).OrderBy(x => x).ToList();
-        if (vals[^1] - vals[0] > StableSpread)
-        {
-            _dryAccum.Clear();
-            return;
-        }
+        // Always lock: take median, prefer closer to 5000 if already locked
         var median = vals[vals.Count / 2];
         var dist = Math.Abs(median - 5000);
-        if (_dryLocked && dist > _best + 3) 
-        {
-            _dryAccum.Clear();
-            return;
-        }
+        if (_dryLocked && dist > _best + 8) return;
         _dryG = median;
         _best = dist;
+        var was = _dryLocked;
         _dryLocked = true;
         _dry.Text = median.ToString("0") + " g";
-        _wet.Text = "—";
-        _eq.Text = "—";
-        _point.Text = "—";
-        _wetG = null;
-        _wetSeen.Clear();
-        _state.Text = "khô ổn " + median.ToString("0") + " g";
-        _chart.MarkCapture(DateTime.Now, (int)median);
-        _dryAccum.Clear();
+        if (!was)
+        {
+            _wet.Text = "—";
+            _eq.Text = "—";
+            _point.Text = "—";
+            _wetG = null;
+            _wetSeen.Clear();
+            _state.Text = "khô khóa " + median.ToString("0") + " g";
+            _chart.MarkCapture(DateTime.Now, (int)median);
+        }
+    }
+
+    void TryCommitAndEnd()
+    {
+        if (_dryLocked && Wet(out var wet))
+            Commit(_dryG, wet);
+        else
+            EndSession();
     }
 
     void TryLockWet()
@@ -489,8 +487,11 @@ public sealed class MainForm : Form
                 _state.Text = "không chốt, cân ướt ngoài phụ lục";
             }
             _eq.Text = equiv.ToString("0") + " g";
+            _scoreSaved = true;
+            _scoreSavedAt = DateTime.UtcNow;
+            SaveSessionSamples(id);
             RememberTrial();
-            EndSession();
+            // Do not EndSession immediately; wait for return-to-zero or 15s stable
             Reload();
         }
         catch (Exception ex)
@@ -510,6 +511,52 @@ public sealed class MainForm : Form
             _chart.ShowFrom(_trialStarts[^15]);
     }
 
+    void SaveSessionSamples(long trialId)
+    {
+        try
+        {
+            var path = Path.Combine(_store.DataDir, "thudiem_samples.db");
+            using var cx = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + path);
+            cx.Open();
+            using (var cmd = cx.CreateCommand())
+            {
+                cmd.CommandText = """
+                    CREATE TABLE IF NOT EXISTS samples (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      trial_id INTEGER,
+                      ts TEXT,
+                      grams INTEGER
+                    );
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+            using var tx = cx.BeginTransaction();
+            foreach (var (t, g) in _sessionSamples)
+            {
+                using var ins = cx.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = "INSERT INTO samples(trial_id, ts, grams) VALUES($id,$ts,$g)";
+                ins.Parameters.AddWithValue("$id", trialId);
+                ins.Parameters.AddWithValue("$ts", t.ToString("o"));
+                ins.Parameters.AddWithValue("$g", g);
+                ins.ExecuteNonQuery();
+            }
+            // Keep only last 50 trials
+            using (var trim = cx.CreateCommand())
+            {
+                trim.Transaction = tx;
+                trim.CommandText = """
+                    DELETE FROM samples WHERE trial_id NOT IN (
+                      SELECT DISTINCT trial_id FROM samples ORDER BY trial_id DESC LIMIT 50
+                    );
+                    """;
+                trim.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        catch { }
+    }
+
     void EndSession()
     {
         _session = false;
@@ -518,6 +565,9 @@ public sealed class MainForm : Form
         _wetSeen.Clear();
         _recent.Clear();
         _dryAccum.Clear();
+        _sessionSamples.Clear();
+        _scoreSaved = false;
+        _scoreSavedAt = DateTime.MinValue;
         _best = double.MaxValue;
         _prev = 0;
         _lowSince = DateTime.MinValue;
